@@ -8,12 +8,14 @@
 //   helmsman-dump IMAGE-OR-FOLDER picture NAME PALETTE OUT.png [ARCHIVE]
 //   helmsman-dump IMAGE-OR-FOLDER disc
 //   helmsman-dump IMAGE-OR-FOLDER room MISSION ROOM SPAWN TICKS OUT.png
+//   helmsman-dump IMAGE-OR-FOLDER music FILE SONG SECONDS OUT.wav
 //   helmsman-dump IMAGE-OR-FOLDER play MISSION ROOM SPAWN SCRIPT OUT-FOLDER
 //
 // A play script has one step per line, "FRAME WHAT ...", frames counted
 // from the start: "move X Y", "left", "right" (press and release), "key
 // enter|escape|space|up|down|left|right|CHAR", "shot NAME" (writes
 // NAME.png with the pointer) and "end".
+#include "helmsman/audio/adlib.hpp"
 #include "helmsman/away/mission.hpp"
 #include "helmsman/engine/fiber.hpp"
 #include "helmsman/data/archive.hpp"
@@ -186,6 +188,34 @@ int main(int argc, char** argv) {
                 std::printf("script ended at frame %d\n", frame);
             }
             std::printf("%s", mission.describe().c_str());
+        } else if (what == "music" && argc >= 7) {
+            // Plays a song of a music file into a WAV file.
+            const auto archive = Archive::open(*source, "DATA");
+            audio::AdLibMusic music(44100);
+            music.setInstruments(archive.need("GTL.AD"));
+            music.setSongs(audio::readXmidi(archive.need(argv[3])));
+            music.play(std::stoi(argv[4]));
+            const auto frames = static_cast<std::size_t>(std::stod(argv[5]) * 44100);
+            std::vector<std::int16_t> pcm(frames * 2);
+            music.render(pcm.data(), frames);
+            std::ofstream out(argv[6], std::ios::binary);
+            auto u32 = [&out](std::uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+            auto u16 = [&out](std::uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+            const auto bytes = static_cast<std::uint32_t>(pcm.size() * 2);
+            out.write("RIFF", 4);
+            u32(36 + bytes);
+            out.write("WAVEfmt ", 8);
+            u32(16);
+            u16(1);
+            u16(2);
+            u32(44100);
+            u32(44100 * 4);
+            u16(4);
+            u16(16);
+            out.write("data", 4);
+            u32(bytes);
+            out.write(reinterpret_cast<const char*>(pcm.data()), static_cast<std::streamsize>(bytes));
+            std::printf("%d songs, song %d %s\n", music.songCount(), std::stoi(argv[4]), music.playing() ? "still playing" : "ended");
         } else if (what == "check") {
             // Unpacks every file of an archive.
             const auto archive = Archive::open(*source, archiveArg(3));

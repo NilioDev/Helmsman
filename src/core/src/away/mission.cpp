@@ -1063,7 +1063,13 @@ std::uint32_t Mission::roomFunction(int fn, const std::array<std::uint16_t, 6>& 
         }
         return 0;
     }
-    case 0x10: // music
+    case 0x10: // a song of the mission music, or quiet (below 0)
+        if (s(1) < 0) {
+            session_.stopMusic();
+        } else {
+            session_.loadMusic("ground");
+            session_.playMusic(s(1));
+        }
         return 0;
     case 0x11:
         endMission(s(1), s(2), s(3));

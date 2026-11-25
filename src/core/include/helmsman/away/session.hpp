@@ -5,6 +5,7 @@
 // by (18.2 ticks a second, as the PC's timer).
 #pragma once
 
+#include "helmsman/audio/adlib.hpp"
 #include "helmsman/away/assets.hpp"
 #include "helmsman/data/archive.hpp"
 #include "helmsman/data/game_source.hpp"
@@ -13,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -32,6 +34,9 @@ const ItemInfo& itemInfo(int item);
 class Session {
 public:
     Session(Platform& platform, GameSource& source);
+    ~Session();
+    Session(const Session&) = delete;
+    Session& operator=(const Session&) = delete;
 
     Platform& platform;
     GameSource& source;
@@ -54,10 +59,22 @@ public:
     void playEffect(std::string_view name, bool loop = false);
     void stopEffects();
 
+    // Music: a music file of the archive ("ground", "bridge"...) and one of
+    // its songs. Playing goes on while the game waits.
+    void loadMusic(std::string_view name);
+    void playMusic(int song);
+    void stopMusic();
+    audio::AdLibMusic music;
+    bool musicOn = true;
+
     // A line of a text file in the archive (lines end in a zero byte).
     std::string textLine(std::string_view file, int index);
 
 private:
+    void pumpMusic();
+    std::function<void(Platform&)> previousWait_;
+    std::string musicName_;
+    bool musicLoaded_ = false;
     std::uint64_t startMillis_ = 0;
     std::uint64_t lastTick_ = 0;
 };

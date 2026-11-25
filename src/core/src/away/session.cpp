@@ -61,6 +61,69 @@ Session::Session(Platform& p, GameSource& s)
         carried[static_cast<std::size_t>(i)] = kItems[static_cast<std::size_t>(i)].startsWith;
     }
     startMillis_ = platform.millis;
+    if (const auto library = archive.load("GTL.AD")) {
+        music.setInstruments(*library);
+    }
+    previousWait_ = platform.onWait;
+    platform.onWait = [this](Platform& pf) {
+        if (previousWait_) {
+            previousWait_(pf);
+        }
+        pumpMusic();
+    };
+}
+
+Session::~Session() {
+    platform.onWait = previousWait_;
+    platform.stopSound(SoundChannel::Music);
+}
+
+void Session::loadMusic(std::string_view name) {
+    const std::string file = upper(std::string(name)) + ".AD";
+    if (musicLoaded_ && file == musicName_) {
+        return;
+    }
+    stopMusic();
+    musicName_ = file;
+    musicLoaded_ = false;
+    if (const auto bytes = archive.load(file)) {
+        try {
+            music.setSongs(audio::readXmidi(*bytes));
+            musicLoaded_ = true;
+        } catch (const FormatError&) {
+        }
+    }
+}
+
+void Session::playMusic(int song) {
+    if (!musicLoaded_) {
+        return;
+    }
+    platform.stopSound(SoundChannel::Music);
+    music.play(song);
+}
+
+void Session::stopMusic() {
+    music.stop();
+    platform.stopSound(SoundChannel::Music);
+}
+
+void Session::pumpMusic() {
+    if (!music.playing() || !musicOn) {
+        return;
+    }
+    constexpr std::size_t kFrames = 1024;
+    auto& queued = platform.soundQueued[static_cast<int>(SoundChannel::Music)];
+    int guard = 0;
+    while (queued < 0.15 && guard++ < 8) {
+        SoundCommand c;
+        c.channel = SoundChannel::Music;
+        c.rate = music.rate();
+        c.wide.resize(kFrames * 2);
+        music.render(c.wide.data(), kFrames);
+        queued += static_cast<double>(kFrames) / music.rate();
+        platform.sound.push_back(std::move(c));
+    }
 }
 
 std::uint64_t Session::ticks() const {
