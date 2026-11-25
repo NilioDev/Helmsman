@@ -10,6 +10,7 @@
 
 #include "helmsman/away/scene.hpp"
 #include "helmsman/away/session.hpp"
+#include "helmsman/away/ui.hpp"
 #include "helmsman/cpu/x86.hpp"
 #include "helmsman/engine/savegame.hpp"
 
@@ -197,6 +198,7 @@ private:
     void refreshExtraSprites();
     void setCursor(int action, bool highlight);
     void setPointerPicture(const std::string& name);
+    Ui ui();
     void updateCursorHighlight();
 
     // Screens over the room.
