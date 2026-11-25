@@ -51,6 +51,7 @@ public:
         write8(seg, static_cast<std::uint16_t>(off + 1), static_cast<std::uint8_t>(v >> 8));
     }
     std::uint8_t* memory() { return mem_.data(); }
+    const std::uint8_t* memory() const { return mem_.data(); }
     static std::uint32_t linear(std::uint16_t seg, std::uint16_t off) {
         return ((std::uint32_t{seg} << 4) + off) & (kMemorySize - 1);
     }

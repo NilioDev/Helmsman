@@ -42,6 +42,7 @@ inline constexpr std::uint8_t kF1 = 0x3B;
 enum class SoundChannel : std::uint8_t {
     Voice,  // speech: one at a time
     Effect, // sound effects
+    Ambient, // a sound effect played over and over
     Music,  // signed 16-bit stereo frames at the player's rate
     Count,
 };
