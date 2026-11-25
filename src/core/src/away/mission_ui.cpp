@@ -7,6 +7,7 @@
 #include "helmsman/data/reader.hpp"
 
 #include <algorithm>
+#include <ctime>
 #include <cstdio>
 
 namespace helmsman::away {
@@ -639,7 +640,7 @@ void Mission::leftClick() {
         return;
     }
     int object = objectAt(p.mouseX, p.mouseY);
-    if (trace_) {
+    if (session_.trace) {
         std::fprintf(stderr, "[%llu] click %d at %d,%d on %d\n", static_cast<unsigned long long>(p.millis / 16), action, p.mouseX, p.mouseY, object);
     }
     if (objectUnavailable(object, action)) {
@@ -669,13 +670,15 @@ void Mission::leftClick() {
 
 int Mission::showTextList(std::uint16_t listOffset) {
     std::vector<std::string> lines;
-    // The speaker first (0: nobody), then the choices up to a 0.
+    // The speaker first (0: nobody), then the choices up to a 0 or an
+    // empty text.
     for (int i = 0; i < 16; ++i) {
         const int p = rdf16(listOffset + i * 2);
-        if (p == 0 && i > 0) {
+        std::string text = p == 0 ? std::string() : rdfText(p, 1000);
+        if (i > 0 && text.empty()) {
             break;
         }
-        lines.push_back(p == 0 ? std::string() : rdfText(p, 1000));
+        lines.push_back(std::move(text));
     }
     if (lines.empty()) {
         return 0;
@@ -705,6 +708,27 @@ int Mission::showText(const std::vector<std::string>& lines, int x, int y, std::
     Platform& p = session_.platform;
     const std::string& speaker = lines[0];
     const int choices = static_cast<int>(lines.size()) - 1;
+    // Voice only: no box for a single spoken text.
+    if (choices == 1 && session_.textMode == 2) {
+        const SpokenText spoken = splitSpoken(lines[1]);
+        if (!spoken.voice.empty()) {
+            session_.playSpeech(spoken.voice);
+            p.takeClicks();
+            p.keys.clear();
+            int guard = 0;
+            while ((session_.speaking() || guard < 4) && !p.quit) {
+                ++guard;
+                drawFrame();
+                session_.waitTick();
+                if (p.takeClicks() != 0 || !p.keys.empty()) {
+                    p.keys.clear();
+                    break;
+                }
+            }
+            session_.stopSpeech();
+            return 0;
+        }
+    }
     std::vector<SpokenText> texts;
     std::vector<std::vector<std::string>> wrapped;
     int maxLines = 1;
@@ -847,6 +871,7 @@ int Mission::showText(const std::vector<std::string>& lines, int x, int y, std::
     p.keys.clear();
 
     bool done = false;
+    bool heardVoice = false;
     while (!done) {
         if (shownChoice != choice) {
             shownChoice = choice;
@@ -870,6 +895,14 @@ int Mission::showText(const std::vector<std::string>& lines, int x, int y, std::
         }
         session_.waitTick();
         int pressed = -1;
+        // With subtitles, a single spoken text goes away when the voice ends.
+        if (session_.textMode == 1 && choices == 1 && !texts[0].voice.empty()) {
+            if (session_.speaking()) {
+                heardVoice = true;
+            } else if (heardVoice) {
+                pressed = 0;
+            }
+        }
         if ((p.takeClicks() & 1) != 0) {
             for (const auto& b : buttons) {
                 if (enabled(b.value) && p.mouseX >= b.x - b.bitmap->handleX && p.mouseX < b.x - b.bitmap->handleX + b.bitmap->width() &&
@@ -1133,8 +1166,271 @@ int Mission::inventory(bool) {
     return result;
 }
 
+// --- The options -----------------------------------------------------------
+
+namespace {
+
+// The order of the missions, for the descriptions of saved games.
+int missionNumber(const std::string& name) {
+    static const char* const kOrder[] = {"DEMON", "TUG", "LOVE", "MUDD", "FEATHER", "TRIAL", "SINS", "VENG"};
+    static const int kNumber[] = {1, 2, 3, 4, 5, 5, 6, 7};
+    for (int i = 0; i < 8; ++i) {
+        if (upper(name) == kOrder[i]) {
+            return kNumber[i];
+        }
+    }
+    return 0;
+}
+
+std::string timeNow() {
+    const std::time_t t = std::time(nullptr);
+    std::tm local{};
+#if defined(_WIN32)
+    localtime_s(&local, &t);
+#else
+    localtime_r(&t, &local);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof buf, "%d %b %H:%M", &local);
+    return buf;
+}
+
+} // namespace
+
+// A row of picture buttons from a menu file (.MNU: name, x, y, value),
+// placed from (x, y). Buttons whose bit (1 << (value + 1)) is in `hidden`
+// are left out. Gives the value of the button chosen, or -1.
+int Mission::buttonMenu(const std::string& file, int x, int y, std::uint32_t hidden) {
+    Platform& p = session_.platform;
+    struct Button {
+        Sprite sprite;
+        int value = 0;
+    };
+    std::vector<Button> buttons;
+    if (const auto menu = session_.archive.load(upper(file) + ".MNU")) {
+        Reader r(*menu);
+        while (r.remaining() >= 16) {
+            std::string name = lower(r.fixedText(10));
+            while (!name.empty() && name.back() == ' ') {
+                name.pop_back();
+            }
+            Button b;
+            b.sprite.x = x + r.s16();
+            b.sprite.y = y + r.s16();
+            b.value = r.s16();
+            if (b.value >= -1 && b.value < 31 && (hidden & (1u << (b.value + 1))) != 0) {
+                continue;
+            }
+            try {
+                b.sprite.bitmap = session_.assets.picture(name);
+            } catch (const FormatError&) {
+                continue;
+            }
+            b.sprite.mode = SpriteMode::Overlay;
+            b.sprite.depth = 15;
+            buttons.push_back(std::move(b));
+        }
+    }
+    if (buttons.empty()) {
+        return -1;
+    }
+    const auto savedPointer = p.pointer;
+    const int savedHotX = p.pointerHotX;
+    const int savedHotY = p.pointerHotY;
+    setPointerPicture("pushbtn");
+    p.takeClicks();
+    p.keys.clear();
+    p.pointerTargets.clear();
+    for (const auto& b : buttons) {
+        int l = 0, t = 0, w = 0, h = 0;
+        if (b.sprite.bounds(l, t, w, h)) {
+            p.pointerTargets.push_back(ClipRect{l, t, l + w, t + h});
+        }
+    }
+    p.warpPointer = true;
+    p.warpX = buttons[0].sprite.x + buttons[0].sprite.bitmap->width() / 2;
+    p.warpY = buttons[0].sprite.y + buttons[0].sprite.bitmap->height() / 2;
+    auto under = [&](int mx, int my) {
+        for (std::size_t i = 0; i < buttons.size(); ++i) {
+            int l = 0, t = 0, w = 0, h = 0;
+            if (buttons[i].sprite.bounds(l, t, w, h) && mx >= l && my >= t && mx < l + w && my < t + h) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    int result = -1;
+    bool done = false;
+    while (!done) {
+        drawFrame();
+        const int hover = under(p.mouseX, p.mouseY);
+        for (std::size_t i = 0; i < buttons.size(); ++i) {
+            const Sprite& sp = buttons[i].sprite;
+            scene_.drawSprite(p.screen, sp);
+            if (static_cast<int>(i) == hover) {
+                // The button under the pointer gets a frame.
+                int l = 0, t = 0, w = 0, h = 0;
+                sp.bounds(l, t, w, h);
+                for (int c = l + 1; c < l + w - 1; ++c) {
+                    p.screen.set(c, t + 1, 0xDA);
+                    p.screen.set(c, t + h - 2, 0xDA);
+                }
+                for (int r = t + 1; r < t + h - 1; ++r) {
+                    p.screen.set(l + 1, r, 0xDA);
+                    p.screen.set(l + w - 2, r, 0xDA);
+                }
+            }
+        }
+        session_.waitTick();
+        const std::uint8_t clicks = p.takeClicks();
+        if ((clicks & 1) != 0) {
+            const int i = under(p.mouseX, p.mouseY);
+            result = i >= 0 ? buttons[static_cast<std::size_t>(i)].value : -1;
+            done = true;
+        } else if ((clicks & 2) != 0) {
+            done = true;
+        }
+        while (!p.keys.empty()) {
+            const KeyPress key = p.keys.front();
+            p.keys.pop_front();
+            if (key.scancode == scancode::kEnter || key.scancode == scancode::kF1) {
+                const int i = under(p.mouseX, p.mouseY);
+                result = i >= 0 ? buttons[static_cast<std::size_t>(i)].value : -1;
+                done = true;
+            } else if (key.scancode == scancode::kEscape || key.scancode == scancode::kSpace) {
+                done = true;
+            }
+        }
+        if (p.quit) {
+            break;
+        }
+    }
+    session_.playEffect("BUTTON1");
+    p.pointer = savedPointer;
+    p.pointerHotX = savedHotX;
+    p.pointerHotY = savedHotY;
+    p.pointerTargets.clear();
+    return result;
+}
+
 void Mission::optionsMenu() {
-    // Helmsman's own menu comes with the game's options.
+    // The menu leaves out the choice that is already in effect.
+    std::uint32_t hidden = 0;
+    hidden |= 1u << ((session_.musicOn() ? 2 : 3) + 1);
+    hidden |= 1u << ((session_.effectsOn ? 4 : 5) + 1);
+    const int choice = buttonMenu("options", 0x32, 0x32, hidden);
+    switch (choice) {
+    case 0:
+        saveMenu();
+        break;
+    case 1:
+        loadMenu();
+        break;
+    case 2:
+        session_.setMusicOn(true);
+        break;
+    case 3:
+        session_.setMusicOn(false);
+        break;
+    case 4:
+        session_.effectsOn = true;
+        break;
+    case 5:
+        session_.effectsOn = false;
+        session_.stopEffects();
+        break;
+    case 6:
+        quitMenu();
+        break;
+    case 7:
+        textDisplayMenu();
+        break;
+    default:
+        break;
+    }
+}
+
+void Mission::saveMenu() {
+    Platform& p = session_.platform;
+    const auto saves = listSaves(p.saveFolder, "anniversary");
+    std::vector<std::string> lines = {"Save Game"};
+    const bool room = static_cast<int>(saves.size()) < kMaxSaves;
+    if (room) {
+        lines.push_back("#GENE\\GENER023#Save new game.");
+    }
+    for (const auto& s : saves) {
+        lines.push_back("Replace: " + s.description);
+    }
+    const int choice = showText(lines, 0x14, 0x14, 0xB0, false);
+    if (choice < 0 || choice >= static_cast<int>(lines.size()) - 1) {
+        return;
+    }
+    int number = -1;
+    if (room && choice == 0) {
+        number = freeSaveNumber(p.saveFolder, "anniversary");
+    } else {
+        number = saves[static_cast<std::size_t>(choice - (room ? 1 : 0))].number;
+    }
+    SaveWriter w;
+    w.text("away");
+    session_.save(w);
+    save(w);
+    char description[64];
+    std::snprintf(description, sizeof description, "Mission %d, %s", missionNumber(name_), timeNow().c_str());
+    if (number < 0 || !writeSave(p.saveFolder, "anniversary", number, description, w.data)) {
+        showText({"", "The game could not be saved."}, 0x14, 0x14, 0xB0, false);
+    }
+}
+
+void Mission::loadMenu() {
+    Platform& p = session_.platform;
+    const auto saves = listSaves(p.saveFolder, "anniversary");
+    if (saves.empty()) {
+        showText({"", "#GENE\\GENERJ01#No games saved."}, 0x14, 0x14, 0xB0, false);
+        return;
+    }
+    std::vector<std::string> lines = {"Load Game"};
+    for (const auto& s : saves) {
+        lines.push_back(s.description);
+    }
+    const int choice = showText(lines, 0x14, 0x14, 0xB0, false);
+    if (choice < 0 || choice >= static_cast<int>(saves.size())) {
+        return;
+    }
+    MissionResult r;
+    r.loadSave = saves[static_cast<std::size_t>(choice)].number;
+    result_ = r;
+}
+
+void Mission::quitMenu() {
+    const int choice = showText({"Quit Game", "#GENE\\GENER028#Yes, quit the game.", "#GENE\\GENER008#No, do not quit the game."},
+                                0x14, 0x14, 0xB0, false);
+    if (choice == 0) {
+        MissionResult r;
+        r.quit = true;
+        result_ = r;
+    }
+}
+
+void Mission::textDisplayMenu() {
+    // The choices in the order the box shows them.
+    static constexpr int kModes[3] = {1, 0, 2};
+    int start = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (kModes[i] == session_.textMode) {
+            start = i;
+        }
+    }
+    std::vector<std::string> lines = {"Text display", "Text subtitles.", "Display text until you press enter.", "No text displayed."};
+    // The current choice first, then the others in turn.
+    std::vector<std::string> shown = {lines[0]};
+    for (int i = 0; i < 3; ++i) {
+        shown.push_back(lines[static_cast<std::size_t>(1 + (start + i) % 3)]);
+    }
+    const int choice = showText(shown, 0x14, 0x1E, 0xB0, false);
+    if (choice >= 0 && choice < 3) {
+        session_.textMode = kModes[(start + choice) % 3];
+    }
 }
 
 void Mission::showPicture(const std::string& name) {

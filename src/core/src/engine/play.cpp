@@ -11,8 +11,7 @@ void playGame(Platform& platform, GameSource& source) {
     if (source.game() == GameId::Anniversary) {
         // For now: the first planet mission, the crew beaming down.
         away::Session session(platform, source);
-        away::Mission mission(session, "DEMON");
-        mission.run(0, 4);
+        away::playAway(session, "DEMON", 0, 4);
         return;
     }
     const auto archive = Archive::open(source, "DATA");

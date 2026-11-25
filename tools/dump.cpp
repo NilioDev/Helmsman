@@ -138,11 +138,17 @@ int main(int argc, char** argv) {
             }
             const std::string outFolder = argv[7];
             Platform platform;
+            platform.saveFolder = outFolder + "/saves";
             int frame = 0;
             int release = -1;
             platform.onWait = [&](Platform& p) {
                 p.millis += 16;
                 ++frame;
+                // The sound plays away as on a real computer.
+                for (auto& q : p.soundQueued) {
+                    q = q > 0.016 ? q - 0.016 : 0.0;
+                }
+                p.sound.clear();
                 if (frame == release) {
                     p.mouseButtons = 0;
                 }
@@ -179,15 +185,13 @@ int main(int argc, char** argv) {
                 }
             };
             away::Session session(platform, *source);
-            away::Mission mission(session, argv[3]);
-            mission.setTrace(std::getenv("HELMSMAN_TRACE") != nullptr);
+            session.trace = std::getenv("HELMSMAN_TRACE") != nullptr;
             try {
-                const auto result = mission.run(std::stoi(argv[4]), std::stoi(argv[5]));
+                const auto result = away::playAway(session, argv[3], std::stoi(argv[4]), std::stoi(argv[5]));
                 std::printf("mission ended: score %d, %d %d%s\n", result.score, result.a, result.b, result.quit ? ", quit" : "");
             } catch (const StopRequested&) {
                 std::printf("script ended at frame %d\n", frame);
             }
-            std::printf("%s", mission.describe().c_str());
         } else if (what == "music" && argc >= 7) {
             // Plays a song of a music file into a WAV file.
             const auto archive = Archive::open(*source, "DATA");

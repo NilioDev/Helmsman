@@ -10,6 +10,7 @@
 #include "helmsman/data/archive.hpp"
 #include "helmsman/data/game_source.hpp"
 #include "helmsman/engine/platform.hpp"
+#include "helmsman/engine/savegame.hpp"
 #include "helmsman/gfx/font.hpp"
 
 #include <array>
@@ -45,7 +46,8 @@ public:
     Font font;
 
     std::array<bool, kItemCount> carried{};
-    bool subtitles = true;
+    // For checking: each event and call of the rooms' code goes to stderr.
+    bool trace = false;
 
     // The game clock in ticks since the session started.
     std::uint64_t ticks() const;
@@ -64,8 +66,19 @@ public:
     void loadMusic(std::string_view name);
     void playMusic(int song);
     void stopMusic();
+    void setMusicOn(bool on);
+    bool musicOn() const { return musicOn_; }
     audio::AdLibMusic music;
-    bool musicOn = true;
+
+    // The player's options (the game's options menu).
+    bool effectsOn = true;
+    // 0: text boxes wait for the player; 1: they close when the voice
+    // ends; 2: only the voice, no box, where there is a voice.
+    int textMode = 1;
+
+    // What lasts between rooms and missions, for saved games.
+    void save(SaveWriter& w) const;
+    void restore(SaveReader& r);
 
     // A line of a text file in the archive (lines end in a zero byte).
     std::string textLine(std::string_view file, int index);
@@ -75,6 +88,8 @@ private:
     std::function<void(Platform&)> previousWait_;
     std::string musicName_;
     bool musicLoaded_ = false;
+    bool musicOn_ = true;
+    int song_ = -1;
     std::uint64_t startMillis_ = 0;
     std::uint64_t lastTick_ = 0;
 };

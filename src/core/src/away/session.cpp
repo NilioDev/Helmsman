@@ -96,7 +96,8 @@ void Session::loadMusic(std::string_view name) {
 }
 
 void Session::playMusic(int song) {
-    if (!musicLoaded_) {
+    song_ = song;
+    if (!musicLoaded_ || !musicOn_) {
         return;
     }
     platform.stopSound(SoundChannel::Music);
@@ -104,12 +105,56 @@ void Session::playMusic(int song) {
 }
 
 void Session::stopMusic() {
+    song_ = -1;
     music.stop();
     platform.stopSound(SoundChannel::Music);
 }
 
+void Session::setMusicOn(bool on) {
+    if (on == musicOn_) {
+        return;
+    }
+    musicOn_ = on;
+    if (!on) {
+        music.stop();
+        platform.stopSound(SoundChannel::Music);
+    } else if (song_ >= 0) {
+        playMusic(song_);
+    }
+}
+
+void Session::save(SaveWriter& w) const {
+    w.u8(kItemCount);
+    for (const bool c : carried) {
+        w.u8(c ? 1 : 0);
+    }
+    w.text(musicName_);
+    w.s32(song_);
+}
+
+void Session::restore(SaveReader& r) {
+    const int count = r.u8();
+    for (int i = 0; i < count; ++i) {
+        const bool c = r.u8() != 0;
+        if (i < kItemCount) {
+            carried[static_cast<std::size_t>(i)] = c;
+        }
+    }
+    std::string name = r.text();
+    const int song = r.s32();
+    if (name.size() > 3 && name.compare(name.size() - 3, 3, ".AD") == 0) {
+        name.resize(name.size() - 3);
+        loadMusic(name);
+        if (song >= 0) {
+            playMusic(song);
+        } else {
+            stopMusic();
+        }
+    }
+}
+
 void Session::pumpMusic() {
-    if (!music.playing() || !musicOn) {
+    if (!music.playing() || !musicOn_) {
         return;
     }
     constexpr std::size_t kFrames = 1024;
@@ -167,6 +212,9 @@ bool Session::speaking() const { return platform.soundQueued[static_cast<int>(So
 void Session::stopSpeech() { platform.stopSound(SoundChannel::Voice); }
 
 void Session::playEffect(std::string_view name, bool loop) {
+    if (!effectsOn) {
+        return;
+    }
     std::string path = "VOC/SFX/";
     for (const char c : name) {
         path.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));

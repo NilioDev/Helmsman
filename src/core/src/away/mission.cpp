@@ -787,7 +787,7 @@ void Mission::processEvents() {
 }
 
 void Mission::handleEvent(const Event& e) {
-    if (trace_ && e.action != kTick) {
+    if (session_.trace && e.action != kTick) {
         std::fprintf(stderr, "[%llu] event %d %02x %02x %02x\n", static_cast<unsigned long long>(session_.platform.millis / 16), e.action, e.b1, e.b2, e.b3);
     }
     if ((e.action == kFinishedWalking || e.action == kFinishedAnimation) && e.b1 == 0xFF) {
@@ -937,7 +937,7 @@ void Mission::hostCall(X86& cpu) {
 }
 
 std::uint32_t Mission::roomFunction(int fn, const std::array<std::uint16_t, 6>& a) {
-    if (trace_) {
+    if (session_.trace) {
         std::fprintf(stderr, "[%llu]  call %d (%x %x %x %x %x %x)\n", static_cast<unsigned long long>(session_.platform.millis / 16), fn, a[0], a[1], a[2], a[3], a[4], a[5]);
     }
     auto s = [&a](int i) { return static_cast<int>(static_cast<std::int16_t>(a[static_cast<std::size_t>(i - 1)])); };
@@ -1177,6 +1177,10 @@ void Mission::drawFrame() {
 MissionResult Mission::run(int room, int spawn) {
     setUpRoom(room);
     spawnCrew(spawn);
+    return loop();
+}
+
+MissionResult Mission::loop() {
     setCursor(kWalk, false);
     session_.platform.pointerShown = true;
     while (true) {
@@ -1204,6 +1208,167 @@ MissionResult Mission::run(int room, int spawn) {
         tickOnce();
         drawFrame();
     }
+}
+
+// --- Saved games ----------------------------------------------------------------
+
+namespace {
+constexpr std::uint32_t kMissionSaveVersion = 1;
+}
+
+void Mission::save(SaveWriter& w) const {
+    w.u32(kMissionSaveVersion);
+    w.text(name_);
+    w.s32(room_);
+    w.u32(static_cast<std::uint32_t>(roomTicks_));
+    w.u8(warpsEnabled_ ? 1 : 0);
+    // The mission's state, and the room's code and data as they are now.
+    const std::uint8_t* mem = cpu_.memory();
+    w.bytes(std::span<const std::uint8_t>(mem + X86::linear(kDataSeg, kState), kStateSize));
+    w.bytes(std::span<const std::uint8_t>(mem + X86::linear(kRoomSeg, 0), rdf_.size()));
+    // Who is in the room, and what they are doing.
+    int used = 0;
+    for (const auto& a : actors_) {
+        used += a.used ? 1 : 0;
+    }
+    w.u8(static_cast<std::uint8_t>(used));
+    for (int i = 0; i < kActors; ++i) {
+        const Actor& a = actors_[static_cast<std::size_t>(i)];
+        if (!a.used) {
+            continue;
+        }
+        w.u8(static_cast<std::uint8_t>(i));
+        w.u8(static_cast<std::uint8_t>(a.state));
+        w.text(a.animName);
+        w.text(a.standName);
+        w.s32(a.frame);
+        w.s32(a.x);
+        w.s32(a.y);
+        w.s32(a.scale);
+        w.u8(static_cast<std::uint8_t>(a.sprite.mode));
+        w.u8(a.notifyFinish ? 1 : 0);
+        w.s32(a.finishEvent);
+        w.s32(a.destX);
+        w.s32(a.destY);
+        w.u8(static_cast<std::uint8_t>(a.dir));
+    }
+    // Events still to come.
+    w.u8(static_cast<std::uint8_t>(std::min<std::size_t>(events_.size(), 64)));
+    for (std::size_t i = 0; i < events_.size() && i < 64; ++i) {
+        const Event& e = events_[i];
+        w.u8(e.action);
+        w.u8(e.b1);
+        w.u8(e.b2);
+        w.u8(e.b3);
+    }
+}
+
+MissionResult Mission::resume(SaveReader& r) {
+    if (r.u32() != kMissionSaveVersion) {
+        throw FormatError("a saved game of another version");
+    }
+    name_ = r.text();
+    const int room = r.s32();
+    setUpRoom(room);
+    roomTicks_ = r.u32();
+    warpsEnabled_ = r.u8() != 0;
+    const auto state = r.blob(kStateSize);
+    const auto roomData = r.blob(0x10000);
+    if (state.size() != static_cast<std::size_t>(kStateSize) || roomData.size() != rdf_.size()) {
+        throw FormatError("the saved room does not match the game's room");
+    }
+    std::uint8_t* mem = cpu_.memory();
+    std::memcpy(mem + X86::linear(kDataSeg, kState), state.data(), state.size());
+    std::memcpy(mem + X86::linear(kRoomSeg, 0), roomData.data(), roomData.size());
+    // The room's link to the game, in case the save came from elsewhere.
+    cpu_.write16(kRoomSeg, 0, 0x0000);
+    cpu_.write16(kRoomSeg, 2, X86::kHostSegment);
+    cpu_.write16(kRoomSeg, 4, kState);
+
+    clearActors();
+    const int used = r.u8();
+    for (int n = 0; n < used; ++n) {
+        const int i = r.u8();
+        const int st = r.u8();
+        const std::string anim = r.text();
+        const std::string stand = r.text();
+        const int frame = r.s32();
+        const int x = r.s32();
+        const int y = r.s32();
+        const int scale = r.s32();
+        const int mode = r.u8();
+        const bool notify = r.u8() != 0;
+        const int finish = r.s32();
+        const int destX = r.s32();
+        const int destY = r.s32();
+        const char dir = static_cast<char>(r.u8());
+        if (i < 0 || i >= kActors) {
+            throw FormatError("a saved actor out of range");
+        }
+        Actor& a = actors_[static_cast<std::size_t>(i)];
+        if (st == static_cast<int>(Actor::State::Walking) && i <= 3) {
+            // Walking on from where they were.
+            a.standName = stand;
+            walkActor(i, crewName(i, "walk"), x, y, destX, destY);
+        } else {
+            loadAnimInto(a, anim, x, y, std::clamp(scale, 1, 0x400), true);
+            a.state = st == static_cast<int>(Actor::State::Standing) ? Actor::State::Standing : Actor::State::Animating;
+            a.standName = stand;
+            if (a.frames != nullptr && frame > 0 && frame < static_cast<int>(a.frames->size())) {
+                const AnimFrame& f = (*a.frames)[static_cast<std::size_t>(frame)];
+                a.frame = frame;
+                a.pictureName = f.picture;
+                try {
+                    a.sprite.bitmap = session_.assets.picture(f.picture, a.scale);
+                } catch (const FormatError&) {
+                    a.sprite.bitmap.reset();
+                }
+                a.sprite.x = a.x + f.x;
+                a.sprite.y = a.y + f.y;
+                a.sprite.depth = depthOfRow(a.y + f.y) + f.depth;
+            }
+        }
+        a.sprite.mode = static_cast<SpriteMode>(std::clamp(mode, 0, 3));
+        a.notifyFinish = notify;
+        a.finishEvent = finish;
+        a.dir = dir;
+    }
+    events_.clear();
+    const int events = r.u8();
+    for (int n = 0; n < events; ++n) {
+        Event e;
+        e.action = r.u8();
+        e.b1 = r.u8();
+        e.b2 = r.u8();
+        e.b3 = r.u8();
+        events_.push_back(e);
+    }
+    return loop();
+}
+
+MissionResult playAway(Session& session, const std::string& mission, int room, int spawn) {
+    MissionResult result;
+    {
+        Mission m(session, mission);
+        result = m.run(room, spawn);
+    }
+    while (result.loadSave >= 0 && !result.quit) {
+        const int number = result.loadSave;
+        const auto data = readSave(session.platform.saveFolder, "anniversary", number);
+        if (!data) {
+            result = MissionResult{};
+            result.quit = true;
+            break;
+        }
+        SaveReader r(*data);
+        if (r.text() != "away") {
+            throw FormatError("a saved game of a part Helmsman does not play yet");
+        }
+        session.restore(r);
+        Mission m(session, mission);
+        result = m.resume(r);
+    }
+    return result;
 }
 
 } // namespace helmsman::away

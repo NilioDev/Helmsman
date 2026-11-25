@@ -11,6 +11,7 @@
 #include "helmsman/away/scene.hpp"
 #include "helmsman/away/session.hpp"
 #include "helmsman/cpu/x86.hpp"
+#include "helmsman/engine/savegame.hpp"
 
 #include <array>
 #include <cstdint>
@@ -83,6 +84,7 @@ struct MissionResult {
     int a = 0;
     int b = 0;
     bool quit = false;    // the player left the game
+    int loadSave = -1;    // the player chose to load this saved game
 };
 
 class Mission {
@@ -92,6 +94,11 @@ public:
     // Plays the mission from `room`, the crew coming in the way `spawn`
     // says, until it ends.
     MissionResult run(int room, int spawn);
+    // Carries on from a saved game (see save()).
+    MissionResult resume(SaveReader& r);
+    // The mission as it is now, for a saved game.
+    void save(SaveWriter& w) const;
+    const std::string& name() const { return name_; }
 
     // For tests and tools: load a room and let the crew come in without
     // input, for `ticks` ticks.
@@ -109,13 +116,10 @@ public:
 
     // A line for each actor, for checking.
     std::string describe() const;
-    // Writes each event and call of the room code to stderr.
-    void setTrace(bool on) { trace_ = on; }
 
     static constexpr int kActors = 32;
 
 private:
-    bool trace_ = false;
     // The mission's state, kept where the rooms' code finds it.
     static constexpr std::uint16_t kDataSeg = 0x1000;
     static constexpr std::uint16_t kRoomSeg = 0x2000;
@@ -202,6 +206,12 @@ private:
     int actionMenu();
     int inventory(bool forUse);
     void optionsMenu();
+    int buttonMenu(const std::string& file, int x, int y, std::uint32_t hidden);
+    void saveMenu();
+    void loadMenu();
+    void quitMenu();
+    void textDisplayMenu();
+    MissionResult loop();
     void showPicture(const std::string& name);
 
     void endMission(int a, int b, int c);
@@ -256,5 +266,9 @@ private:
     bool inRoomCode_ = false;
     std::uint64_t textEndTick_ = 0;
 };
+
+// Plays a mission from `room`, and carries on from saved games the player
+// loads along the way, until a mission ends or the player quits.
+MissionResult playAway(Session& session, const std::string& mission, int room, int spawn);
 
 } // namespace helmsman::away
