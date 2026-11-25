@@ -17,6 +17,7 @@
 // NAME.png with the pointer) and "end".
 #include "helmsman/audio/adlib.hpp"
 #include "helmsman/away/mission.hpp"
+#include "helmsman/bridge/bridge.hpp"
 #include "helmsman/engine/fiber.hpp"
 #include "helmsman/data/archive.hpp"
 #include "helmsman/data/reader.hpp"
@@ -187,8 +188,14 @@ int main(int argc, char** argv) {
             away::Session session(platform, *source);
             session.trace = std::getenv("HELMSMAN_TRACE") != nullptr;
             try {
-                const auto result = away::playAway(session, argv[3], std::stoi(argv[4]), std::stoi(argv[5]));
-                std::printf("mission ended: score %d, %d %d%s\n", result.score, result.a, result.b, result.quit ? ", quit" : "");
+                if (std::string(argv[3]) == "BRIDGE") {
+                    bridge::Bridge b(session);
+                    const auto result = b.run();
+                    std::printf("bridge ended%s\n", result.quit ? ": quit" : "");
+                } else {
+                    const auto result = away::playAway(session, argv[3], std::stoi(argv[4]), std::stoi(argv[5]));
+                    std::printf("mission ended: score %d, %d %d%s\n", result.score, result.a, result.b, result.quit ? ", quit" : "");
+                }
             } catch (const StopRequested&) {
                 std::printf("script ended at frame %d\n", frame);
             }
