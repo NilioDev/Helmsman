@@ -774,7 +774,7 @@ int Game::sayStruct(std::uint16_t seg, std::uint16_t at) {
         if (off == 0) {
             break;
         }
-        texts.push_back(m_.scriptText(seg, off));
+        texts.push_back(lineText(seg, off));
     }
     if (pendingTalker_ == kChoiceSpeaker) {
         // A choice is always the captain's.

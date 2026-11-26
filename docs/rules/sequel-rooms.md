@@ -23,6 +23,14 @@ where a table starts and where it stops.
 | 0x22 | first, end: how the crew comes in, for each way in |
 | 0x26 | for each way out, the room it leads to (-1 none) |
 
+### Texts kept apart
+
+A room whose word 6 is 0x0112 keeps its spoken lines in a second file with
+the same name and the extension RTF: the strings one after another, each
+ending in a zero byte. Where such a room's code would hold a line, it holds
+a word whose top four bits are all set; the other twelve bits count which
+string of the RTF file to show, starting at 0.
+
 ## Events
 
 An event is four bytes: its kind and three values.

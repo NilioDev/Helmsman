@@ -1073,6 +1073,7 @@ void Game::loadRoom(int number, bool first, bool restoring) {
         throw FormatError("the room's code is missing: " + name);
     }
     m_.loadRoomCode(Machine::kRoom, *code, true);
+    loadRoomTexts(name);
     if (!restoring) {
         popHandlers(0, -1); // the last room's, gone with its code
         pushHandlers(0, m_.word(Machine::kRoom, room::kLists), 0);
@@ -1602,6 +1603,43 @@ void Game::awayMission() {
     }
 }
 
+// Room code of version 0x112 keeps its lines in <ROOM>.RTF: a run of
+// NUL-ended strings. A line whose first word reads 0xFnnn is string nnn.
+void Game::loadRoomTexts(const std::string& name) {
+    roomTexts_.clear();
+    if (m_.word(Machine::kRoom, 6) != 0x112) {
+        return;
+    }
+    const auto data = file(name + ".RTF");
+    if (!data) {
+        throw FormatError("the room's texts are missing: " + name);
+    }
+    std::string cur;
+    for (const auto b : *data) {
+        if (b == 0) {
+            roomTexts_.push_back(std::move(cur));
+            cur.clear();
+            if (roomTexts_.size() > 0x1000) {
+                throw FormatError("too many room texts: " + name);
+            }
+        } else {
+            cur.push_back(static_cast<char>(b));
+        }
+    }
+    if (!cur.empty()) {
+        roomTexts_.push_back(std::move(cur));
+    }
+}
+
+std::string Game::lineText(std::uint16_t seg, std::uint16_t off) const {
+    const auto w = m_.cpu.read16(seg, off);
+    if ((w & 0xF000) == 0xF000 && !roomTexts_.empty()) {
+        const std::size_t i = w & 0x0FFFu;
+        return i < roomTexts_.size() ? roomTexts_[i] : std::string{};
+    }
+    return m_.scriptText(seg, off);
+}
+
 int Game::sayRoom(std::uint16_t at) {
     const auto seg = currentSeg_;
     const auto who = s16(m_.cpu.read16(seg, at));
@@ -1609,14 +1647,14 @@ int Game::sayRoom(std::uint16_t at) {
     const auto first = m_.cpu.read16(seg, static_cast<std::uint16_t>(at + 2));
     const auto second = m_.cpu.read16(seg, static_cast<std::uint16_t>(at + 4));
     if (first != 0 && second == 0xFFFF) {
-        texts.push_back(m_.scriptText(seg, first));
+        texts.push_back(lineText(seg, first));
     } else {
         for (int i = 1; i < 16; ++i) {
             const auto off = m_.cpu.read16(seg, static_cast<std::uint16_t>(at + 2 * i));
             if (off == 0) {
                 break;
             }
-            texts.push_back(m_.scriptText(seg, off));
+            texts.push_back(lineText(seg, off));
         }
     }
     return say(who, texts, seg);

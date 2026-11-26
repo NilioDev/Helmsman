@@ -550,6 +550,11 @@ private:
     std::uint32_t roomTicks_ = 0;  // ticks since the room was entered (tick events)
     int roomNumber_ = 0;
     std::uint16_t currentSeg_ = 0; // the code a running handler belongs to
+    // The room's text file (<ROOM>.RTF), for rooms whose code says so.
+    std::vector<std::string> roomTexts_;
+    void loadRoomTexts(const std::string& name);
+    // A line of a say: inline text, or one of the room's texts.
+    std::string lineText(std::uint16_t seg, std::uint16_t off) const;
     int currentKind_ = 0;
     int area_ = -1; // the touch area Kirk stands in
     int exitArmed_ = -1;
