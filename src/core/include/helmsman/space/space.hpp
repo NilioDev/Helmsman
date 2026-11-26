@@ -20,6 +20,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <random>
 #include <span>
 #include <string>
@@ -84,8 +85,9 @@ struct ShipClass {
     bool cloaks = false;
     std::array<Mount, 4> mounts{};
 
-    // Throws FormatError when the file is too short.
-    static ShipClass fromBytes(std::span<const std::uint8_t> bytes);
+    // Throws FormatError when the file is too short. The second game's
+    // files give each shield and part a fourth word (`recordSize` 8).
+    static ShipClass fromBytes(std::span<const std::uint8_t> bytes, int recordSize = 6);
 };
 
 // What sort of thing an object is.
@@ -162,6 +164,15 @@ public:
     static constexpr int kObjects = kFirstStill + kStills;
 
     explicit Space(const Archive& archive);
+
+    // The second game: ships are drawn from its .R3D pictures (103 views of
+    // each, see docs/formats/ships.md), its description files have longer
+    // records, and files missing from the archive are asked of `moreFiles`
+    // (an episode's own archive).
+    void useSequel(std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)> moreFiles) {
+        sequel_ = true;
+        moreFiles_ = std::move(moreFiles);
+    }
 
     // The viewscreen: where on the screen, and how far it is zoomed (4..8).
     void setView(ClipRect rect, int zoom);
@@ -287,7 +298,11 @@ private:
     void drawStatic(Surface& to);
     int project(std::int32_t v, std::int32_t z) const;
 
+    std::optional<std::vector<std::uint8_t>> load(const std::string& name) const;
+
     const Archive& archive_;
+    bool sequel_ = false;
+    std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)> moreFiles_;
     std::array<Object, kObjects> objects_{};
     std::map<std::string, ShipClass> classes_;
     std::map<std::string, std::shared_ptr<const Bitmap>> pictures_;

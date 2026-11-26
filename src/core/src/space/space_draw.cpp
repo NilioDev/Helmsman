@@ -30,6 +30,52 @@ std::map<std::string, ViewPicture>& viewCache() {
     return cache;
 }
 
+// The second game keeps 103 pictures of each ship (KLG00001.R3D on): 13
+// rings from above to below, 15 degrees apart, of 1, 4, 7, 9, 11, 13, 13, 13,
+// 11, 9, 7, 4 and 1 pictures from the bow round to the stern, the other side
+// mirrored. How each picture lies follows from its ring and place.
+const ViewPicture& sequelView(const Archive& archive,
+                              const std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)>& more,
+                              int type, const Vec& v, double len, bool& mirrored) {
+    static constexpr const char* kSets[5] = {"ENT", "KLG", "ORI", "ROM", "FKR"};
+    static constexpr int kFirst[14] = {1, 2, 6, 13, 22, 33, 46, 59, 72, 83, 92, 99, 103, 104};
+    static constexpr int kStep[13] = {0, 0x1E00, 0xF00, 0xB40, 0x900, 0x780, 0x780, 0x780, 0x900, 0xB40, 0xF00, 0x1E00, 0};
+    // From above (0) to below (0x200), and round from the bow.
+    const int fromTop = std::clamp(static_cast<int>(std::acos(std::clamp(v.y / len, -1.0, 1.0)) / std::numbers::pi * 512.0), 0, 512);
+    const int ring = std::clamp(12 - (fromTop * 45 + 960) / 1920, 0, 12);
+    int around = static_cast<int>(std::lround(std::atan2(-static_cast<double>(v.x), -static_cast<double>(v.z)) / std::numbers::pi * 512.0));
+    mirrored = around < 0;
+    around = std::min(std::abs(around), 0x200);
+    const int step = kStep[ring];
+    const int place = step != 0 ? std::min((around * 45 + step / 2) / step, kFirst[ring + 1] - kFirst[ring] - 1) : 0;
+    char name[16];
+    std::snprintf(name, sizeof name, "%s%05d", kSets[std::clamp(type, 0, 4)], kFirst[ring] + place);
+    auto& cache = viewCache();
+    auto found = cache.find(name);
+    if (found == cache.end()) {
+        ViewPicture vp;
+        const std::string file = std::string(name) + ".R3D";
+        auto data = archive.load(file);
+        if (!data && more) {
+            data = more(file);
+        }
+        if (data) {
+            try {
+                vp.bitmap = std::make_shared<const Bitmap>(Bitmap::fromBytes(*data));
+            } catch (const FormatError&) {
+            }
+        }
+        // The picture's own turn: round (h) and up (e).
+        const double h = static_cast<double>(step) * place / 45 / 512.0 * std::numbers::pi;
+        const double e = (static_cast<double>(ring) * 0x780 / 45 - 0x100) / 512.0 * std::numbers::pi;
+        auto fix = [](double x) { return static_cast<std::int16_t>(std::lround(x * (kOne - 1))); };
+        const double cH = std::cos(h), sH = std::sin(h), cE = std::cos(e), sE = std::sin(e);
+        vp.axes.m = {fix(cH), fix(sH * sE), fix(sH * cE), 0, fix(cE), fix(-sE), fix(-sH), fix(cH * sE), fix(cH * cE)};
+        found = cache.emplace(name, vp).first;
+    }
+    return found->second;
+}
+
 } // namespace
 
 int Space::project(std::int32_t v, std::int32_t z) const {
@@ -269,41 +315,47 @@ void Space::drawObject(Surface& to, Object& o) {
             const Vec v = apply(o.viewAxes, -o.viewPos);
             const double len = std::max(1.0, std::sqrt(static_cast<double>(v.x) * v.x + static_cast<double>(v.y) * v.y +
                                                        static_cast<double>(v.z) * v.z));
-            const int heading = (angleOf(v.x, v.z) + 0x2A) & (kTurn - 1);
-            const int sector = heading * 12 / kTurn;
-            const int fromTop = static_cast<int>(std::acos(std::clamp(v.y / len, -1.0, 1.0)) / std::numbers::pi * 512.0);
-            const int level = std::min(6, (fromTop * 6 + 0x100) / 0x200);
-            int around = sector;
+            const ViewPicture* view = nullptr;
             bool mirrored = false;
-            if (sector > 6) {
-                around = 12 - sector;
-                mirrored = true;
-            }
-            if (level == 0 || level == 6) {
-                around = 0;
-                mirrored = false;
-            }
-            char name[16];
-            std::snprintf(name, sizeof name, "%s%d%d", kPictureSets[std::clamp(o.type, 0, 3)], around, level);
-            auto& cache = viewCache();
-            auto found = cache.find(name);
-            if (found == cache.end()) {
-                ViewPicture vp;
-                if (const auto data = archive_.load(std::string(name) + ".R3S"); data && data->size() > 36) {
-                    try {
-                        Reader r(*data);
-                        for (auto& e : vp.axes.m) {
-                            e = r.s16();
-                        }
-                        vp.bitmap = std::make_shared<const Bitmap>(
-                            Bitmap::fromBytes(std::span<const std::uint8_t>(*data).subspan(36)));
-                    } catch (const FormatError&) {
-                    }
+            if (sequel_) {
+                view = &sequelView(archive_, moreFiles_, o.type, v, len, mirrored);
+            } else {
+                const int heading = (angleOf(v.x, v.z) + 0x2A) & (kTurn - 1);
+                const int sector = heading * 12 / kTurn;
+                const int fromTop = static_cast<int>(std::acos(std::clamp(v.y / len, -1.0, 1.0)) / std::numbers::pi * 512.0);
+                const int level = std::min(6, (fromTop * 6 + 0x100) / 0x200);
+                int around = sector;
+                if (sector > 6) {
+                    around = 12 - sector;
+                    mirrored = true;
                 }
-                found = cache.emplace(name, vp).first;
+                if (level == 0 || level == 6) {
+                    around = 0;
+                    mirrored = false;
+                }
+                char name[16];
+                std::snprintf(name, sizeof name, "%s%d%d", kPictureSets[std::clamp(o.type, 0, 3)], around, level);
+                auto& cache = viewCache();
+                auto found = cache.find(name);
+                if (found == cache.end()) {
+                    ViewPicture vp;
+                    if (const auto data = archive_.load(std::string(name) + ".R3S"); data && data->size() > 36) {
+                        try {
+                            Reader r(*data);
+                            for (auto& e : vp.axes.m) {
+                                e = r.s16();
+                            }
+                            vp.bitmap = std::make_shared<const Bitmap>(
+                                Bitmap::fromBytes(std::span<const std::uint8_t>(*data).subspan(36)));
+                        } catch (const FormatError&) {
+                        }
+                    }
+                    found = cache.emplace(name, vp).first;
+                }
+                view = &found->second;
             }
-            if (found->second.bitmap) {
-                Mat m = found->second.axes;
+            if (view->bitmap) {
+                Mat m = view->axes;
                 if (mirrored) {
                     m.at(0, 1) = static_cast<std::int16_t>(-m.at(0, 1));
                     m.at(0, 2) = static_cast<std::int16_t>(-m.at(0, 2));
@@ -343,7 +395,7 @@ void Space::drawObject(Surface& to, Object& o) {
                 for (double& e : a) {
                     e *= s;
                 }
-                drawPicture(to, *found->second.bitmap, mirrored, a, o.screenX, o.screenY);
+                drawPicture(to, *view->bitmap, mirrored, a, o.screenX, o.screenY);
             }
         }
     }

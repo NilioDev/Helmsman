@@ -59,21 +59,24 @@ int randomInt(std::mt19937& rng) { return static_cast<int>(rng() & 0x7FFF); }
 
 } // namespace
 
-ShipClass ShipClass::fromBytes(std::span<const std::uint8_t> bytes) {
+ShipClass ShipClass::fromBytes(std::span<const std::uint8_t> bytes, int recordSize) {
     Reader r(bytes);
     ShipClass c;
     c.picture = r.s16();
     c.size = r.s16();
     c.scale = r.s16();
+    const std::size_t extra = recordSize > 6 ? static_cast<std::size_t>(recordSize - 6) : 0;
     for (auto& s : c.shields) {
         s.on = r.s16() != 0;
         s.best = r.s16();
         s.now = r.s16();
+        r.skip(extra);
     }
     for (auto& p : c.parts) {
         p.on = r.s16() != 0;
         p.best = r.s16();
         p.now = r.s16();
+        r.skip(extra);
     }
     c.maxTurn = static_cast<std::int32_t>(r.u32());
     c.turnChange = static_cast<std::int32_t>(r.u32());
@@ -130,7 +133,7 @@ std::shared_ptr<const Bitmap> Space::picture(const std::string& name) {
     std::shared_ptr<const Bitmap> b;
     // Most are kept as .SHP, a few (the warp flash) as plain pictures.
     for (const char* ext : {".SHP", ".BMP"}) {
-        if (const auto data = archive_.load(key + ext)) {
+        if (const auto data = load(key + ext)) {
             try {
                 b = std::make_shared<const Bitmap>(Bitmap::fromBytes(*data));
             } catch (const FormatError&) {
@@ -149,9 +152,23 @@ const ShipClass& Space::shipClass(const std::string& name) {
     }
     auto found = classes_.find(key);
     if (found == classes_.end()) {
-        found = classes_.emplace(key, ShipClass::fromBytes(archive_.need(key + ".DSC"))).first;
+        const auto data = load(key + ".DSC");
+        if (!data) {
+            throw FormatError("the ship description " + key + ".DSC is missing");
+        }
+        found = classes_.emplace(key, ShipClass::fromBytes(*data, sequel_ ? 8 : 6)).first;
     }
     return found->second;
+}
+
+std::optional<std::vector<std::uint8_t>> Space::load(const std::string& name) const {
+    if (auto data = archive_.load(name)) {
+        return data;
+    }
+    if (moreFiles_) {
+        return moreFiles_(name);
+    }
+    return std::nullopt;
 }
 
 void Space::setView(ClipRect rect, int zoom) {
