@@ -109,7 +109,7 @@ void kenkaTalk(Bridge& b) {
     if (present(b, 0)) {
         b.space().remove(space::Space::kFirstShip);
     }
-    v.system = 8;
+    b.warpTo(8);
     v.destination = 8;
     b.setControl(true);
     b.setFullView(false);

@@ -4,6 +4,7 @@
 #include "bridge/missions.hpp"
 
 #include "helmsman/away/menus.hpp"
+#include "helmsman/data/program.hpp"
 #include "helmsman/data/reader.hpp"
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/gfx/palette.hpp"
@@ -126,6 +127,60 @@ Bridge::Bridge(away::Session& session, Voyage& voyage) : session_(session), voya
     space_.report = [this](int event, int what, bool player) { report(event, what, player); };
     space_.sound = [this](int n) { sound(n); };
     space_.music = [this](int song) { music(song); };
+    // Planets are drawn with a table from the game's data and colours kept
+    // in its program.
+    try {
+        if (const auto program = session_.source.read(programName(session_.source.game()))) {
+            space_.setPlanetLook(space::PlanetLook::load(session_.archive, programImage(*program)));
+        }
+    } catch (const FormatError&) {
+    }
+}
+
+namespace {
+
+// Each named system's planet: its number and colour ramp. The systems
+// past these get one made up by chance.
+constexpr int kPlanets[20][2] = {{0x1C5, 6},  {0x125, 0xA}, {0x205, 0xB}, {0x13E, 0xC}, {0x39C, 0x12},
+                                 {0x155, 7},  {0x358, 8},   {0x87, 0},    {0x188, 0xE}, {0x283, 0xD},
+                                 {0x340, 0xC}, {0x155, 0xB}, {0x347, 0xA}, {0x3A4, 7},   {0x285, 0xE},
+                                 {0xEA, 0xF}, {0x155, 0x10}, {0x373, 0x11}, {0x2F0, 9},  {0xEA, 9}};
+
+// Where a system's planet lies from the point the ship arrives at.
+constexpr std::int32_t kPlanetAhead = 0x3BC4;
+
+} // namespace
+
+void Bridge::newPlanet(int system) {
+    if (system >= 0 && system < 20) {
+        voyage_.planetSeed = kPlanets[system][0];
+        voyage_.planetRamp = kPlanets[system][1];
+    } else {
+        auto& rng = space_.random();
+        voyage_.planetSeed = static_cast<int>(rng() % 1000);
+        voyage_.planetRamp = static_cast<int>(rng() % 16) + 6;
+    }
+    showPlanet();
+}
+
+void Bridge::showPlanet() {
+    if (voyage_.planetSeed < 0) {
+        space_.removePlanet();
+        return;
+    }
+    space_.setPlanet(voyage_.planetSeed, voyage_.planetRamp, space::Vec{0, 0, kPlanetAhead});
+}
+
+void Bridge::warpTo(int system) {
+    sound(0x29);
+    space::Object& p = space_.player();
+    p.pos = {};
+    p.axes = space::Mat::identity();
+    p.velocity = {};
+    voyage_.system = system;
+    voyage_.inOrbit = false;
+    newPlanet(system);
+    space_.resetStars();
 }
 
 void Bridge::setZoom(int zoom) {
@@ -251,37 +306,49 @@ std::string Bridge::enterCode() {
 }
 
 void Bridge::approach(int still) {
-    // The ship drifts in from far ahead and comes to rest in front of the
-    // Enterprise, slowing down as it nears; then the Enterprise holds
-    // station beside it.
+    // The ship waits a little way off the planet, up and to the left; the
+    // Enterprise comes in from far behind it, slowing down, and stops with
+    // it straight ahead.
     static constexpr const char* kStills[8] = {"", "", "", "", "ark7", "derelict", "masada", "republic"};
     removeStill();
     constexpr int kScale = 2;
     const std::int32_t near = space_.focal() * kScale;
-    const std::int32_t far = near * 6;
-    const int i = space_.addStill(kStills[std::clamp(still, 4, 7)], space::Vec{0, 0, far});
+    space::Object& p = space_.player();
+    const space::Vec at = space_.hasPlanet() ? space_.planet().pos + space::Vec{-1000, 1000, -5000}
+                                             : p.pos + space::applyTransposed(p.axes, space::Vec{0, 0, near});
+    const int i = space_.addStill(kStills[std::clamp(still, 4, 7)], space::Vec{});
     if (i < 0) {
         orbit(true, false);
         return;
     }
     space::Object& s = space_.object(i);
-    const space::Object& p = space_.player();
+    s.pos = at;
     s.size = 0xFA;
     s.scale = kScale;
-    s.axes = p.axes;
+    s.axes = space::Mat::identity();
+    p.axes = space::Mat::identity();
+    p.velocity = {};
+    p.speed = 0;
+    p.wantSpeed = 0;
     voyage_.inOrbit = true;
     const bool wasFull = fullView_;
     setFullView(true);
+    // A hundred ticks, each a little slower than the last.
     constexpr int kSteps = 100;
-    for (int step = 1; step <= kSteps && !session_.platform.quit; ++step) {
-        const std::int64_t left = kSteps - step;
-        const auto z = static_cast<std::int32_t>(near + (far - near) * left * left / (kSteps * kSteps));
-        s.pos = p.pos + space::applyTransposed(p.axes, space::Vec{0, 0, z});
+    constexpr std::int32_t kFirstStep = 0xC5;
+    std::int32_t travel = 0;
+    for (int step = 0; step < kSteps; ++step) {
+        travel += kFirstStep - 2 * step;
+    }
+    p.pos = at - space::Vec{0, 0, near + travel};
+    for (int step = 0; step < kSteps && !session_.platform.quit; ++step) {
         session_.waitTick();
+        space_.tick();
         drawFrame();
+        p.pos.z += kFirstStep - 2 * step;
     }
     setFullView(wasFull);
-    s.pos = p.pos + space::applyTransposed(p.axes, space::Vec{0, 0, near});
+    p.pos = at - space::Vec{0, 0, near};
     orbit(true, false);
 }
 
@@ -432,9 +499,10 @@ void Bridge::flyby(const std::string& title, const std::string& voice, int stage
     session_.playEffect("BRIDLOOP", true);
     setFullView(true);
     space_.resetStars();
+    newPlanet(-1);
     space::Object& p = space_.player();
-    p.axes = space::Mat::identity();
-    space::yaw(p.axes, 0x100);
+    p.pos = {};
+    p.axes = space::heading(0x100); // a quarter turn: it crosses the view
     p.wantSpeed = 0;
     p.speed = 0;
     p.velocity = {};
@@ -1213,10 +1281,7 @@ void Bridge::starMap() {
     }
     p.palette = saved;
     setControl(control_);
-    // Warp to it.
-    sound(0x29);
-    voyage_.system = chosen;
-    voyage_.inOrbit = false;
+    warpTo(chosen);
     if (voyage_.system != voyage_.destination) {
         startEncounter(*this);
     }
@@ -1370,6 +1435,7 @@ void Bridge::saveState(SaveWriter& w) const { space_.save(w); }
 
 void Bridge::restoreState(SaveReader& r) {
     space_.restore(r);
+    showPlanet();
     space_.watchFromBridge();
     clearEvents();
 }

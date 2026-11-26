@@ -20,6 +20,9 @@
 #include "helmsman/bridge/bridge.hpp"
 #include "helmsman/engine/play.hpp"
 #include "helmsman/space/space.hpp"
+#include "helmsman/space/planet.hpp"
+#include "helmsman/data/program.hpp"
+#include "helmsman/data/game_source.hpp"
 #include "helmsman/engine/fiber.hpp"
 #include "helmsman/data/archive.hpp"
 #include "helmsman/data/reader.hpp"
@@ -92,6 +95,27 @@ int main(int argc, char** argv) {
             const auto palette = Palette::fromBytes(archive.need(argv[4]));
             writePng(argv[5], bitmap.pixels, palette);
             std::printf("%dx%d, handle %d,%d\n", bitmap.width(), bitmap.height(), bitmap.handleX, bitmap.handleY);
+        } else if (what == "planets" && argc >= 4) {
+            // Every system's planet seen from a few sides, in one picture.
+            const auto archive = Archive::open(*source, "DATA");
+            const auto program = source->read(programName(source->game()));
+            const auto image = programImage(*program);
+            const auto look = space::PlanetLook::load(archive, image);
+            if (!look) {
+                std::fprintf(stderr, "no planet data\n");
+                return 1;
+            }
+            const int seeds[][2] = {{0x1c5, 6}, {0x125, 0xa}, {0x205, 0xb}, {0x13e, 0xc}, {0x39c, 0x12}, {0x155, 7},
+                                    {0x358, 8}, {0x87, 0},  {0x188, 0xe}, {0x283, 0xd}, {0x340, 0xc}, {0x155, 0xb},
+                                    {0x347, 0xa}, {0x3a4, 7}, {0x285, 0xe}, {0xea, 0xf}, {0x155, 0x10}, {0x373, 0x11},
+                                    {0x2f0, 9}, {0xea, 9}};
+            Surface sheet(320, 200);
+            for (int i = 0; i < 20; ++i) {
+                const auto surface = space::planetSurface(*look, seeds[i][0], seeds[i][1]);
+                const auto pic = space::planetPicture(*look, surface, 4, i * 40, (i % 5) * 40 - 80);
+                pic.draw(sheet, 32 + (i % 5) * 64, 32 + (i / 5) * 64 - 20);
+            }
+            writePng(argv[3], sheet, Palette::fromBytes(archive.need("BRIDGE.PAL")));
         } else if (what == "raw" && argc >= 5) {
             auto data = source->read(argv[3]);
             if (!data) {

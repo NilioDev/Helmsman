@@ -39,6 +39,8 @@ void Voyage::save(SaveWriter& w) const {
     w.s32(lastScored);
     w.s32(rating);
     w.s32(points);
+    w.s32(planetSeed);
+    w.s32(planetRamp);
 }
 
 void Voyage::restore(SaveReader& r) {
@@ -70,6 +72,8 @@ void Voyage::restore(SaveReader& r) {
     lastScored = r.s32();
     rating = r.s32();
     points = r.s32();
+    planetSeed = r.s32();
+    planetRamp = r.s32();
 }
 
 } // namespace helmsman::bridge

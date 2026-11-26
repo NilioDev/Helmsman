@@ -170,6 +170,18 @@ void Space::setView(ClipRect rect, int zoom) {
     }
 }
 
+void Space::setPlanet(int seed, int ramp, const Vec& where) {
+    planet_ = Object{};
+    planetSurface_.clear();
+    if (!planetLook_) {
+        return;
+    }
+    planet_.kind = Kind::Planet;
+    planet_.pos = where;
+    planet_.axes = heading(planetSpin_);
+    planetSurface_ = planetSurface(*planetLook_, seed, ramp);
+}
+
 void Space::clear() {
     for (auto& o : objects_) {
         o = Object{};
@@ -886,6 +898,11 @@ void Space::updateShots() {
 
 void Space::tick() {
     ++ticks_;
+    // The planet turns, a little each tick.
+    planetSpin_ = (planetSpin_ + 4) & (kTurn - 1);
+    if (planet_.kind == Kind::Planet) {
+        planet_.axes = heading(planetSpin_);
+    }
     Object& p = player();
     if (p.kind == Kind::Ship && !p.destroyed) {
         power(p, true);

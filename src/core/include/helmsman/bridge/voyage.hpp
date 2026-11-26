@@ -62,6 +62,11 @@ struct Voyage {
     int rating = 0;
     int points = 0;
 
+    // The planet of the system the ship is in: its number and colour ramp
+    // (-1: none).
+    int planetSeed = -1;
+    int planetRamp = 0;
+
     void save(SaveWriter& w) const;
     void restore(SaveReader& r);
 };

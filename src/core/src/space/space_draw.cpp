@@ -256,6 +256,10 @@ void Space::drawObject(Surface& to, Object& o) {
         }
         return;
     }
+    if (o.kind == Kind::Planet) {
+        drawPlanet(to, o);
+        return;
+    }
     if (o.kind != Kind::Ship) {
         return;
     }
@@ -375,6 +379,37 @@ void Space::drawStatic(Surface& to) {
     }
 }
 
+void Space::drawPlanet(Surface& to, const Object& o) {
+    if (!planetLook_ || planetSurface_.empty()) {
+        return;
+    }
+    // Which side of it the watcher sees: the way from the eye to the
+    // planet in the planet's own frame.
+    const Vec local = apply(o.axes, o.pos - camera_);
+    const double across = std::hypot(static_cast<double>(local.x), static_cast<double>(local.z));
+    const int heading = angleOf(local.x, local.z) - kTurn / 2;
+    const int latitude = static_cast<int>(std::lround(std::atan2(static_cast<double>(local.y), across) * kTurn /
+                                                      (2 * std::numbers::pi)));
+    // The nearer, the finer the picture it is drawn from.
+    const std::int64_t z = o.viewPos.z;
+    const std::int64_t far = static_cast<std::int64_t>(kPlanetRadius) * focal_;
+    int size = 4;
+    if (z >= far) {
+        size = 0;
+    } else if (z >= far / 2) {
+        size = 1;
+    } else if (z >= far / 3) {
+        size = 2;
+    } else if (z >= far / 4) {
+        size = 3;
+    }
+    const Bitmap b = planetPicture(*planetLook_, planetSurface_, size, -heading, latitude);
+    const int scale = kPlanetRadius / kPlanetShrink[static_cast<std::size_t>(size)];
+    const double s = std::clamp(static_cast<double>(focal_) * scale / static_cast<double>(z), 0.01, 200.0);
+    const double a[4] = {s, 0, 0, s};
+    drawPicture(to, b, false, a, o.screenX, o.screenY);
+}
+
 void Space::draw(Surface& to) {
     placeCamera();
     to.fillRect(view_.left, view_.top, view_.right - view_.left, view_.bottom - view_.top, 0);
@@ -402,6 +437,12 @@ void Space::draw(Surface& to) {
         lookAt(o);
         if (o.seen) {
             shown.push_back(&o);
+        }
+    }
+    if (planet_.kind == Kind::Planet && planetLook_) {
+        lookAt(planet_);
+        if (planet_.seen) {
+            shown.push_back(&planet_);
         }
     }
     std::stable_sort(shown.begin(), shown.end(), [](const Object* a, const Object* b) { return a->distance > b->distance; });

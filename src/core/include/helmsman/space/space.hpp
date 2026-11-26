@@ -13,6 +13,7 @@
 #include "helmsman/gfx/rect.hpp"
 #include "helmsman/gfx/surface.hpp"
 #include "helmsman/space/math.hpp"
+#include "helmsman/space/planet.hpp"
 
 #include <array>
 #include <cstdint>
@@ -93,6 +94,7 @@ enum class Kind : int {
     Still = 1,  // a picture that only turns in the view: a station, a wreck
     Ship = 2,
     Shot = 3,
+    Planet = 4, // the system's planet, turning slowly
 };
 
 struct Object {
@@ -237,6 +239,17 @@ public:
         fixed_ = true;
         outsidePos_ = where;
     }
+    // The planet of the system the ship is in: what planets are drawn with
+    // (nothing is drawn without it), then the planet's number and colour
+    // ramp and where it is.
+    void setPlanetLook(std::shared_ptr<const PlanetLook> look) { planetLook_ = std::move(look); }
+    void setPlanet(int seed, int ramp, const Vec& where);
+    void removePlanet() { planet_ = Object{}; }
+    bool hasPlanet() const { return planet_.kind == Kind::Planet; }
+    const Object& planet() const { return planet_; }
+    // How large planets are, in the units the game gives them.
+    static constexpr std::int32_t kPlanetRadius = 500;
+
     // Forgets the stars, so that new ones are scattered.
     void resetStars();
 
@@ -270,6 +283,7 @@ private:
     void drawObject(Surface& to, Object& o);
     void drawPicture(Surface& to, const Bitmap& b, bool mirrored, const double a[4], int x, int y);
     void drawBeam(Surface& to, const Object& o);
+    void drawPlanet(Surface& to, const Object& o);
     void drawStatic(Surface& to);
     int project(std::int32_t v, std::int32_t z) const;
 
@@ -300,6 +314,11 @@ private:
 
     bool outside_ = false;
     Vec outsidePos_;
+
+    Object planet_;
+    std::shared_ptr<const PlanetLook> planetLook_;
+    std::vector<std::uint8_t> planetSurface_;
+    int planetSpin_ = 0;
 
     std::uint64_t ticks_ = 0;
     bool playerDead_ = false;
