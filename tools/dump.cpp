@@ -708,8 +708,8 @@ int main(int argc, char** argv) {
                             {"enter", scancode::kEnter}, {"escape", scancode::kEscape}, {"space", scancode::kSpace},
                             {"up", scancode::kUp}, {"down", scancode::kDown}, {"left", scancode::kLeft},
                             {"right", scancode::kRight}, {"tab", scancode::kTab},
-                            {"f1", 0x3B}, {"f2", 0x3C}, {"f3", 0x3D}, {"f4", 0x3E}, {"f5", 0x3F},
-                            {"f6", 0x40}, {"f7", 0x41}, {"f8", 0x42}};
+                            {"f1", std::uint8_t{0x3B}}, {"f2", std::uint8_t{0x3C}}, {"f3", std::uint8_t{0x3D}}, {"f4", std::uint8_t{0x3E}}, {"f5", std::uint8_t{0x3F}},
+                            {"f6", std::uint8_t{0x40}}, {"f7", std::uint8_t{0x41}}, {"f8", std::uint8_t{0x42}}};
                         const auto found = named.find(st.args[0]);
                         if (found != named.end()) {
                             p.keys.push_back(KeyPress{found->second, 0});
