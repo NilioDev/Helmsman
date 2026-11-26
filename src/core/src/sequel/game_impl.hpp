@@ -407,6 +407,7 @@ private:
     void exploreFrame();
     void exploreCalled(int function);
     int exploreChoice(int count);
+    bool exploreOtherAnswers();
     [[noreturn]] void exploreJump(const char* why);
     void exploreEnd(int how);
     bool devStart();

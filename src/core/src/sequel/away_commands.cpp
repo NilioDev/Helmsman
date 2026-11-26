@@ -471,6 +471,9 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         return static_cast<std::uint16_t>(picked);
     }
     case 0x30: // a scene
+        if (explore_) {
+            return 0; // nobody watches
+        }
         playScene(p_, assets_, upperName(roomText(c.arg(0), 9)), episode_ ? &*episode_ : nullptr);
         return 0;
     case 0x31: { // a new room picture

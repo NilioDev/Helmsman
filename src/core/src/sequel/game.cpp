@@ -848,6 +848,9 @@ Machine::Flow Game::spaceCommand(ScriptCall& c, std::uint32_t& result) {
         m_.set16(place::kPauseTicks, 0);
         return Machine::Flow::Yield;
     case cmd::kAway:
+        if (p_.devTrace) {
+            std::fprintf(stderr, "away mission: room %d, way in %d\n", c.sarg(1), c.sarg(2));
+        }
         m_.set16(ds::kRoom, c.arg(1));
         m_.set16(ds::kSpawn, c.arg(2));
         m_.set16(place::kPauseTicks, 1);
@@ -1072,7 +1075,9 @@ void Game::bridgeButton(int id) {
 }
 
 void Game::bridge() {
-    loadBridge();
+    if (!explore_ || !awayPending_) {
+        loadBridge(); // (the explorer goes straight back to its mission)
+    }
     loadSuite(episodeName_, 's');
     leaveBridge_ = false;
     p_.pointerShown = true;

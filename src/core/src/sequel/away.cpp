@@ -1028,7 +1028,8 @@ void Game::loadRoom(int number, bool first, bool restoring) {
     }
     if (first && !restoring) {
         pushHandlers(1, m_.word(Machine::kShared, mission::kLists), 1000);
-        // The names of the things the mission brings, after DATA.RDF's.
+        // The names of the things the mission brings, after DATA.RDF's
+        // (only the names: the scripts hand them out).
         int item = 0x46;
         for (const auto seg : {Machine::kGlobal, Machine::kShared}) {
             std::uint16_t at = m_.word(seg, mission::kItems);
@@ -1037,7 +1038,6 @@ void Game::loadRoom(int number, bool first, bool restoring) {
                 const std::string n = m_.scriptText(seg, at, 32);
                 const auto slot = static_cast<std::uint16_t>(spot::kItems + 10 * item);
                 m_.setText(static_cast<std::uint16_t>(slot + 1), n.substr(0, 8), 9);
-                m_.set8(slot, 1);
                 at = static_cast<std::uint16_t>(at + n.size() + 1);
                 ++item;
             }

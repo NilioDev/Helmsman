@@ -46,7 +46,8 @@ constexpr int kPick = 0x103;   // in a replayed path: the answer the next choice
 
 constexpr int kSettleFrames = 12;
 constexpr int kStuckFrames = 6000;
-constexpr int kTalkTries = 3; // a talk is tried with other answers too
+constexpr int kMostFailures = 8;
+constexpr int kMostAnswers = 12; // an order that met a choice is tried again with other answers
 
 std::string actionText(int type, int a, int b, int variant) {
     char s[48];
@@ -64,7 +65,7 @@ std::string actionText(int type, int a, int b, int variant) {
         std::snprintf(s, sizeof s, "look:%02x", a);
         break;
     case 5:
-        std::snprintf(s, sizeof s, "talk:%02x/%d", a, variant);
+        std::snprintf(s, sizeof s, "talk:%02x", a);
         break;
     case kGoOut:
         std::snprintf(s, sizeof s, "out:%d", a);
@@ -79,7 +80,11 @@ std::string actionText(int type, int a, int b, int variant) {
         std::snprintf(s, sizeof s, "wait");
         break;
     }
-    return s;
+    std::string text = s;
+    if (variant > 0) {
+        text += "/" + std::to_string(variant);
+    }
+    return text;
 }
 
 } // namespace
@@ -99,6 +104,9 @@ struct Explorer {
         std::vector<std::uint8_t> state;
         std::vector<Action> actions;
         std::size_t next = 0;
+        int failed = 0; // orders that lost the game or got held here
+        int progress = 0; // how far into the mission it looks
+        int score = 0;    // the points earned
         std::string path;
         int room = 0;
     };
@@ -115,6 +123,9 @@ struct Explorer {
     std::mt19937 rng{1};
     int tried = 0;
     std::deque<Action> replay; // orders to give first, as printed in a path
+    Action current;            // the order under way
+    int choices = 0;           // the choices it met
+    int firstCount = 0;        // the answers of the first
 };
 
 namespace {
@@ -122,9 +133,14 @@ namespace {
 // An order as actionText() writes it.
 std::optional<Explorer::Action> readAction(const std::string& w) {
     Explorer::Action a;
-    const auto colon = w.find(':');
-    const std::string kind = w.substr(0, colon);
-    const std::string rest = colon == std::string::npos ? "" : w.substr(colon + 1);
+    const auto slash = w.find('/');
+    const std::string order = w.substr(0, slash);
+    if (slash != std::string::npos) {
+        a.variant = std::atoi(w.c_str() + slash + 1);
+    }
+    const auto colon = order.find(':');
+    const std::string kind = order.substr(0, colon);
+    const std::string rest = colon == std::string::npos ? "" : order.substr(colon + 1);
     const auto hex = [](const std::string& t) { return static_cast<int>(std::strtol(t.c_str(), nullptr, 16)); };
     if (kind == "walk" || kind == "get" || kind == "look") {
         a.type = kind == "walk" ? 1 : kind == "get" ? 3 : 4;
@@ -136,9 +152,7 @@ std::optional<Explorer::Action> readAction(const std::string& w) {
         a.b = comma == std::string::npos ? 0 : hex(rest.substr(comma + 1));
     } else if (kind == "talk") {
         a.type = 5;
-        const auto slash = rest.find('/');
-        a.a = hex(rest.substr(0, slash));
-        a.variant = slash == std::string::npos ? 0 : std::atoi(rest.c_str() + slash + 1);
+        a.a = hex(rest);
     } else if (kind == "out" || kind == "area") {
         a.type = kind == "out" ? kGoOut : kStepIn;
         a.a = std::atoi(rest.c_str());
@@ -151,6 +165,17 @@ std::optional<Explorer::Action> readAction(const std::string& w) {
         return std::nullopt;
     }
     return a;
+}
+
+int bestNode(const Explorer& x) {
+    int best = -1;
+    for (std::size_t i = 0; i < x.nodes.size(); ++i) {
+        const auto& n = x.nodes[i];
+        if (n.next < n.actions.size() && (best < 0 || n.progress >= x.nodes[static_cast<std::size_t>(best)].progress)) {
+            best = static_cast<int>(i);
+        }
+    }
+    return best;
 }
 
 } // namespace
@@ -178,7 +203,32 @@ int Game::exploreChoice(int count) {
         x.replay.pop_front();
         return std::clamp(a, 0, std::max(0, count - 1));
     }
-    return count <= 1 ? 0 : static_cast<int>(x.rng() % static_cast<unsigned>(count));
+    if (count <= 1) {
+        return 0;
+    }
+    // The first choice of an order goes through its answers one try after
+    // the other; later ones are taken at random.
+    if (x.choices++ == 0) {
+        x.firstCount = count;
+        return x.current.variant % count;
+    }
+    return static_cast<int>(x.rng() % static_cast<unsigned>(count));
+}
+
+// When the order under way met a choice, it is tried again later with other
+// answers. True when it will be.
+bool Game::exploreOtherAnswers() {
+    Explorer& x = *explore_;
+    const bool again = x.from >= 0 && x.choices > 0 &&
+                       x.current.variant + 1 < std::max(std::min(x.firstCount, kMostAnswers), x.choices > 1 ? 4 : 0);
+    if (again) {
+        Explorer::Action a = x.current;
+        ++a.variant;
+        auto& n = x.nodes[static_cast<std::size_t>(x.from)];
+        n.actions.insert(n.actions.begin() + static_cast<std::ptrdiff_t>(std::min(n.next, n.actions.size())), a);
+    }
+    x.choices = 0;
+    return again;
 }
 
 void Game::exploreJump(const char* why) {
@@ -187,20 +237,24 @@ void Game::exploreJump(const char* why) {
         why = "";
     }
     if (*why && x.from >= 0) {
-        std::printf("%s after %s %s\n", why, x.nodes[static_cast<std::size_t>(x.from)].path.c_str(), x.doing.c_str());
+        Explorer::Node& n = x.nodes[static_cast<std::size_t>(x.from)];
+        std::printf("%s after %s %s\n", why, n.path.c_str(), x.doing.c_str());
         std::fflush(stdout);
-    }
-    // The newest state with orders left to try: deeper into the mission
-    // first.
-    for (std::size_t i = x.nodes.size(); i-- > 0;) {
-        if (x.nodes[i].next < x.nodes[i].actions.size()) {
-            x.expect = static_cast<int>(i);
-            x.from = -1;
-            x.settle = 0;
-            x.stuck = 0;
-            x.frames = 0;
-            throw RestoreGame{x.nodes[i].payload, -1};
+        // A state where order after order goes wrong is lost already (a
+        // timer runs out, say): no more of it.
+        if (!exploreOtherAnswers() && ++n.failed >= kMostFailures) {
+            n.next = n.actions.size();
         }
+    }
+    // The state that looks furthest into the mission, with orders left to
+    // try (the newest of those).
+    if (const int i = bestNode(x); i >= 0) {
+        x.from = -1;
+        x.settle = 0;
+        x.stuck = 0;
+        x.frames = 0;
+        x.expect = i;
+        throw RestoreGame{x.nodes[static_cast<std::size_t>(i)].payload, -1};
     }
     std::printf("explored: %zu states, %d orders, nothing left to try\n", x.nodes.size(), x.tried);
     p_.quit = true;
@@ -256,6 +310,7 @@ void Game::exploreIdle() {
         return;
     }
     x.stuck = 0;
+    exploreOtherAnswers();
     // Where are we?
     std::uint64_t key = 1469598103934665603ULL ^ static_cast<std::uint64_t>(roomNumber_ & 0xFF);
     std::vector<std::uint8_t> state;
@@ -279,6 +334,12 @@ void Game::exploreIdle() {
         n.path = x.from >= 0 ? x.nodes[static_cast<std::size_t>(x.from)].path + " " + x.doing : "start";
         n.payload = savePayload();
         n.state = state;
+        // Progress: the values set, and the points earned above all.
+        for (const auto v : state) {
+            n.progress += v != 0 ? 1 : 0;
+        }
+        n.score = m_.s16(0xC224);
+        n.progress += 64 * n.score;
         if (p_.devTrace && x.from >= 0) {
             // What tells it from the state the order was given in.
             const auto& before = x.nodes[static_cast<std::size_t>(x.from)].state;
@@ -332,6 +393,14 @@ void Game::exploreIdle() {
                     if (e[0] < 1 || e[0] > 5 || e[3] != 0) {
                         continue;
                     }
+                    // Things to carry count only once carried.
+                    const auto held = [this](int v) {
+                        return v == 0xFF || v < 0x40 || v >= 0x80 ||
+                               m_.u8(static_cast<std::uint16_t>(kItems + 10 * v)) != 0;
+                    };
+                    if (!held(e[1]) || (e[0] == 2 && !held(e[2]))) {
+                        continue;
+                    }
                     if (e[0] == 2) {
                         if (e[2] == 0xFF) {
                             continue;
@@ -345,9 +414,7 @@ void Game::exploreIdle() {
                             }
                         }
                     } else if (e[1] != 0xFF) {
-                        for (int v = 0; v < (e[0] == 5 ? kTalkTries : 1); ++v) {
-                            add({e[0], e[1], 0, v}, rank + (v > 0 ? 1 : 0));
-                        }
+                        add({e[0], e[1], 0, 0}, rank);
                     }
                 }
             }
@@ -380,14 +447,30 @@ void Game::exploreIdle() {
         }
         if (static_cast<int>(x.nodes.size()) >= x.most) {
             std::printf("stopped at %zu states, %d orders\n", x.nodes.size(), x.tried);
+            std::map<int, int> rooms;
+            const Explorer::Node* furthest = &x.nodes.front();
+            for (const auto& o : x.nodes) {
+                ++rooms[o.room];
+                if (o.progress > furthest->progress) {
+                    furthest = &o;
+                }
+            }
+            for (const auto& [r, k] : rooms) {
+                std::printf("  room %d: %d states\n", r, k);
+            }
+            std::printf("furthest (%d, %d points) in room %d: %s\n", furthest->progress, furthest->score, furthest->room,
+                        furthest->path.c_str());
             p_.quit = true;
             throw LeaveMission{0};
         }
     }
     Explorer::Node& n = x.nodes[static_cast<std::size_t>(node)];
-    if (n.next >= n.actions.size() && x.replay.empty()) {
-        x.from = -1;
-        exploreJump(nullptr);
+    if (x.replay.empty()) {
+        const int best = bestNode(x);
+        if (n.next >= n.actions.size() || (best >= 0 && x.nodes[static_cast<std::size_t>(best)].progress > n.progress)) {
+            x.from = -1;
+            exploreJump(nullptr);
+        }
     }
     while (!x.replay.empty() && x.replay.front().type == kPick) {
         x.replay.pop_front();
@@ -401,10 +484,15 @@ void Game::exploreIdle() {
     }
     ++x.tried;
     x.from = node;
+    x.current = act;
+    x.choices = 0;
     x.doing = actionText(act.type, act.a, act.b, act.variant);
+    if (p_.devTrace) {
+        std::printf("> %s (room %d)\n", x.doing.c_str(), roomNumber_);
+    }
     x.settle = 0;
     x.frames = 0;
-    x.rng.seed(static_cast<unsigned>(node * 7919 + static_cast<int>(n.next) * 31 + act.variant));
+    x.rng.seed(static_cast<unsigned>(node * 7919 + act.type * 131 + act.a * 17 + act.b * 3 + act.variant * 1000003));
     switch (act.type) {
     case kGoOut:
         post(kExitEvent, static_cast<std::uint8_t>(act.a));
