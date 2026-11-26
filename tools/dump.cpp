@@ -10,6 +10,8 @@
 //   helmsman-dump IMAGE-OR-FOLDER room MISSION ROOM SPAWN TICKS OUT.png
 //   helmsman-dump IMAGE-OR-FOLDER music FILE SONG SECONDS OUT.wav
 //   helmsman-dump IMAGE-OR-FOLDER play MISSION ROOM SPAWN SCRIPT OUT-FOLDER
+//   helmsman-dump IMAGE-OR-FOLDER events MISSION ROOM [EVENT]
+//   helmsman-dump IMAGE-OR-FOLDER explore MISSION ROOM SPAWN [MAX]
 //
 // A play script has one step per line, "FRAME WHAT ...", frames counted
 // from the start: "move X Y", "left", "right" (press and release), "key
@@ -30,7 +32,11 @@
 #include "helmsman/gfx/palette.hpp"
 #include "helmsman/gfx/png.hpp"
 
+#include <chrono>
 #include <cstdio>
+#include <deque>
+#include <random>
+#include <set>
 #include <cstdlib>
 #include <fstream>
 #include <map>
@@ -228,6 +234,162 @@ int main(int argc, char** argv) {
                 std::printf("%s%d %02x %02x %02x %02x: %s\n", argv[3], room, e.action, e.b1, e.b2, e.b3, outcome.c_str());
             }
             std::printf("%zu events, %d failed\n", list.size(), failed);
+        } else if (what == "explore" && argc >= 6) {
+            // Looks for a way through a mission by itself: from the start,
+            // tries every event the room answers, keeps each new state of
+            // the mission it reaches (rooms, flags, items) and goes on from
+            // there, until the mission ends or MAX states were tried.
+            const int maxStates = argc >= 7 ? std::stoi(argv[6]) : 5000;
+            int frames = 0;
+            std::mt19937 rng{1};
+            Platform platform;
+            platform.onWait = [&frames, &rng](Platform& p) {
+                p.millis += 16;
+                ++frames;
+                for (auto& q : p.soundQueued) {
+                    q = 0.0;
+                }
+                p.sound.clear();
+                // Sometimes take another answer in a box, then go on.
+                if (frames % 25 == 20 && rng() % 3 == 0) {
+                    p.keys.push_back(KeyPress{scancode::kRight, 0});
+                }
+                if (frames % 25 == 0) {
+                    p.keys.push_back(KeyPress{scancode::kEnter, 0});
+                    p.mouseX = static_cast<int>(rng() % 320);
+                    p.mouseY = static_cast<int>(rng() % 200);
+                    p.mouseButtons = 1;
+                } else if (frames % 25 == 1) {
+                    p.mouseButtons = 0;
+                }
+                if (frames > 4000) {
+                    throw StopRequested{};
+                }
+            };
+            away::Session session(platform, *source);
+            away::Mission m(session, argv[3]);
+            m.autoplay = true;
+            session.setMusicOn(false);
+            m.loadRoom(std::stoi(argv[4]));
+            m.spawnCrew(std::stoi(argv[5]));
+            for (int i = 0; i < 60; ++i) {
+                m.advance(false);
+            }
+            const auto snapshot = [&] {
+                SaveWriter w;
+                session.save(w);
+                m.save(w);
+                return w.data;
+            };
+            const auto keyOf = [&](const std::vector<std::uint8_t>& snap) {
+                // The room, the session and the mission's flags, leaving out
+                // its timers, the mouse and where the actors stand.
+                std::string k = std::to_string(m.room()) + ":";
+                const auto st = m.stateBytes();
+                k.append(st.begin() + 0x14, st.end());
+                SaveWriter w;
+                session.save(w);
+                k.append(w.data.begin(), w.data.end());
+                (void)snap;
+                return k;
+            };
+            struct Node {
+                std::vector<std::uint8_t> snap;
+                std::string path;
+            };
+            std::deque<Node> queue;
+            std::set<std::string> seen;
+            {
+                Node start{snapshot(), ""};
+                seen.insert(keyOf(start.snap));
+                queue.push_back(std::move(start));
+            }
+            int tried = 0;
+            std::chrono::steady_clock::duration restoreTime{};
+            std::set<int> endings;
+            int losses = 0;
+            int stuck = 0;
+            bool done = false;
+            std::map<int, int> roomsSeen;
+            while (!queue.empty() && tried < maxStates && !done) {
+                const Node node = std::move(queue.front());
+                queue.pop_front();
+                std::vector<away::Event> list;
+                {
+                    SaveReader r(node.snap);
+                    session.restore(r);
+                    m.restore(r);
+                    list = m.roomEvents();
+                    const auto exits = m.exitEvents();
+                    list.insert(list.end(), exits.begin(), exits.end());
+                    list.push_back(away::Event{0xFE, 0, 0, 0});
+                }
+                for (const auto& e : list) {
+                    if (done || tried >= maxStates) {
+                        break;
+                    }
+                    ++tried;
+                    const auto t0 = std::chrono::steady_clock::now();
+                    SaveReader r(node.snap);
+                    session.restore(r);
+                    m.restore(r);
+                    session.setMusicOn(false);
+                    restoreTime += std::chrono::steady_clock::now() - t0;
+                    frames = 0;
+                    char id[32];
+                    std::snprintf(id, sizeof id, "%d:%02x%02x%02x%02x ", m.room(), e.action, e.b1, e.b2, e.b3);
+                    try {
+                        // A made-up action 0xFE: just wait, for the room's
+                        // timers.
+                        const int wait = e.action == 0xFE ? 400 : 300;
+                        if (e.action != 0xFE) {
+                            m.inject(e);
+                        }
+                        int quiet = 0;
+                        for (int i = 0; i < wait && !m.ended() && m.roomChangingTo() < 0; ++i) {
+                            m.advance(false);
+                            quiet = m.idle() ? quiet + 1 : 0;
+                            if (quiet >= 20 && e.action != 0xFE) {
+                                break;
+                            }
+                        }
+                        if (m.roomChangingTo() >= 0) {
+                            m.applyRoomChange();
+                            for (int i = 0; i < 80 && !m.ended() && m.roomChangingTo() < 0; ++i) {
+                                m.advance(false);
+                            }
+                        }
+                    } catch (const StopRequested&) {
+                        ++stuck;
+                        continue;
+                    }
+                    if (m.lost()) {
+                        ++losses;
+                        continue;
+                    }
+                    if (m.ended()) {
+                        // The crew beamed up; the mission's score says how
+                        // well. Keep looking for a better ending.
+                        const away::MissionResult* res = m.result();
+                        if (endings.insert(res->score).second) {
+                            std::printf("ENDED after %d tries, score %d (%d %d): %s%s\n", tried, res->score, res->a, res->b, node.path.c_str(), id);
+                            std::fflush(stdout);
+                        }
+                        continue;
+                    }
+                    Node next{snapshot(), node.path + id};
+                    if (seen.insert(keyOf(next.snap)).second) {
+                        ++roomsSeen[m.room()];
+                        queue.push_back(std::move(next));
+                    }
+                }
+            }
+            std::printf("%d tries, %zu endings, %.1f s restoring\n", tried, endings.size(), std::chrono::duration<double>(restoreTime).count());
+            std::printf("%zu states, %d lost, %d stuck; states by room:", seen.size(), losses, stuck);
+            for (const auto& [room, n] : roomsSeen) {
+                std::printf(" %d:%d", room, n);
+            }
+            std::printf("\n");
         } else if (what == "play" && argc >= 8) {
             // Plays a mission with input from a script.
             std::multimap<int, Step> steps;

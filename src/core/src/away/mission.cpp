@@ -749,6 +749,18 @@ std::vector<Event> Mission::roomEvents() const {
     return out;
 }
 
+std::vector<Event> Mission::exitEvents() const {
+    std::vector<Event> out;
+    if (cpu_.memory()[X86::linear(kDataSeg, static_cast<std::uint16_t>(kState + st::kFlags))] == 0 && warpsEnabled_) {
+        int guard = 0;
+        for (int p = rdf16(0x16); p != 0 && p < rdf16(0x18) && guard < 256; ++guard) {
+            out.push_back(Event{kTouchedWarp, static_cast<std::uint8_t>(rdf16(p) & 0xFF), 0, 0});
+            p += 4 + rdf16(p + 2) * 4;
+        }
+    }
+    return out;
+}
+
 bool Mission::hasAction(const Event& e) const {
     const std::uint32_t want = e.action | (e.b1 << 8) | (e.b2 << 16) | (static_cast<std::uint32_t>(e.b3) << 24);
     int guard = 0;
@@ -1091,6 +1103,13 @@ std::uint32_t Mission::roomFunction(int fn, const std::array<std::uint16_t, 6>& 
         endMission(s(1), s(2), s(3));
         return 0;
     case 0x12: { // the game is lost
+        if (autoplay) {
+            MissionResult r;
+            r.quit = true;
+            lost_ = true;
+            result_ = r;
+            return 0;
+        }
         Ui u = ui();
         int load = -1;
         MissionResult r;
@@ -1114,6 +1133,9 @@ std::uint32_t Mission::roomFunction(int fn, const std::array<std::uint16_t, 6>& 
             }
             answers.push_back(lower(one));
             at += static_cast<int>(one.size()) + 1;
+        }
+        if (autoplay) {
+            return answers.empty() ? 0 : 1 + autoAnswer % static_cast<int>(answers.size());
         }
         Ui u = ui();
         const auto typed = away::textInput(u, "Code:", 0xA0, 0x64, 20);
@@ -1315,6 +1337,14 @@ void Mission::save(SaveWriter& w) const {
 }
 
 MissionResult Mission::resume(SaveReader& r) {
+    restore(r);
+    return loop();
+}
+
+void Mission::restore(SaveReader& r) {
+    result_.reset();
+    lost_ = false;
+    pendingChange_.reset();
     if (r.u32() != kMissionSaveVersion) {
         throw FormatError("a saved game of another version");
     }
@@ -1394,7 +1424,15 @@ MissionResult Mission::resume(SaveReader& r) {
         e.b3 = r.u8();
         events_.push_back(e);
     }
-    return loop();
+}
+
+void Mission::applyRoomChange() {
+    if (pendingChange_) {
+        const RoomChange change = *pendingChange_;
+        pendingChange_.reset();
+        setUpRoom(change.room);
+        spawnCrew(change.spawn);
+    }
 }
 
 MissionResult playAway(Session& session, const std::string& mission, int room, int spawn) {

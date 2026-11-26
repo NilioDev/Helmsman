@@ -109,10 +109,12 @@ public:
     void tickOnce();
     void drawFrame();
     // One tick as the game runs it, without the player.
-    void advance() {
+    void advance(bool draw = true) {
         processEvents();
         tickOnce();
-        drawFrame();
+        if (draw) {
+            drawFrame();
+        }
     }
     const Surface& screen() const { return session_.platform.screen; }
 
@@ -121,9 +123,44 @@ public:
     // For tests and tools: the events this room's code answers, one of them
     // as if it happened, and how things stand afterwards.
     std::vector<Event> roomEvents() const;
+    // Walking through each way out of the room, where the crew may now.
+    std::vector<Event> exitEvents() const;
     void inject(const Event& e) { post(e.action, e.b1, e.b2, e.b3); }
     bool ended() const { return result_.has_value(); }
     int roomChangingTo() const { return pendingChange_ ? pendingChange_->room : -1; }
+    // Goes to the room the code asked for, if it did.
+    void applyRoomChange();
+    // Takes up a saved mission (see save()) without playing it.
+    void restore(SaveReader& r);
+    int room() const { return room_; }
+    bool lost() const { return lost_; }
+    // Nothing is waiting to happen: no events, no one of the crew walking
+    // or moving.
+    bool idle() const {
+        for (const auto& e : events_) {
+            if (e.action != kTick) {
+                return false;
+            }
+        }
+        for (int i = 0; i < 4; ++i) {
+            const Actor& a = actors_[static_cast<std::size_t>(i)];
+            if (a.used && a.state != Actor::State::Standing) {
+                return false;
+            }
+        }
+        return true;
+    }
+    // The mission's state block as it is now.
+    std::vector<std::uint8_t> stateBytes() const {
+        const std::uint8_t* m = cpu_.memory() + X86::linear(kDataSeg, kState);
+        return {m, m + kStateSize};
+    }
+    const MissionResult* result() const { return result_ ? &*result_ : nullptr; }
+    // For tools that play by themselves: no menu when the game is lost (it
+    // just ends, lost()), and typed answers are the room's answer number
+    // autoAnswer (counted round).
+    bool autoplay = false;
+    int autoAnswer = 0;
 
     static constexpr int kActors = 32;
 
@@ -241,6 +278,7 @@ private:
     int scaleFactor_ = 0;
 
     std::deque<Event> events_;
+    bool lost_ = false;
     std::uint64_t roomTicks_ = 0;
     std::uint64_t frameTicks_ = 0;
 
