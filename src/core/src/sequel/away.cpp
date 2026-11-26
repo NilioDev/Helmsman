@@ -739,6 +739,13 @@ int Game::pollPanel(std::int32_t ticks) {
         // The explorer presses a button, or (when the panel waits for a
         // while only) none.
         const int n = static_cast<int>(panel_.size());
+        if (p_.devTrace) {
+            std::printf("  buttons:");
+            for (const auto& b : panel_) {
+                std::printf(" %s (%d)", b.picture.c_str(), b.id);
+            }
+            std::printf("\n");
+        }
         const int i = exploreChoice(n + (ticks >= 0 ? 1 : 0));
         return i >= n ? -1 : anyId ? panel_[static_cast<std::size_t>(i)].id : i;
     }
