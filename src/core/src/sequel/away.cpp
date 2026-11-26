@@ -531,6 +531,11 @@ void Game::walkStep(Body& b, int who) {
 
 // Kirk's place against the room's touch areas and ways out.
 void Game::checkAreas(int x, int y) {
+    // While the player gives no orders (Kirk coming in, or walked by a
+    // script) his steps touch nothing: a way in may cross a room's way out.
+    if (busy()) {
+        return;
+    }
     int inArea = -1;
     for (const auto& p : polygons(room::kAreas, room::kAreas + 2)) {
         if (p.contains(x, y)) {
@@ -548,9 +553,6 @@ void Game::checkAreas(int x, int y) {
         area_ = inArea;
     } else if (inArea != -1) {
         post(ev::kInArea, static_cast<std::uint8_t>(inArea));
-    }
-    if (busy()) {
-        return;
     }
     int exit = -1;
     for (const auto& p : polygons(room::kExits, room::kExits + 2)) {
