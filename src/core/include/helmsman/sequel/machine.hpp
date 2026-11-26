@@ -49,11 +49,15 @@ public:
     static constexpr std::uint16_t kRoom = 0x3000;   // a room's code
     static constexpr std::uint16_t kShared = 0x4000; // a mission's shared code
     static constexpr std::uint16_t kStack = 0x5000;
+    static constexpr std::uint16_t kGlobal = 0x6000; // DATA.RDF: handlers for every mission
     static constexpr std::uint16_t kStackTop = 0xFFF0;
     // Where the far pointer at offset 0 of each script points: the host's
     // function numbers for each kind of script.
     static constexpr std::uint16_t kSpaceEntry = 0x0100;
     static constexpr std::uint16_t kRoomEntry = 0x0200;
+    // The event a handler is run for lives in the data segment, a byte
+    // a word (DS:C218, C21A, C21C).
+    static constexpr std::uint16_t kEventBytes = 0xC218;
 
     // Starts from the data segment as the program's file holds it (its
     // initial values). Throws FormatError when the file is not the
@@ -90,8 +94,21 @@ public:
     using Host = std::function<Flow(ScriptCall&, std::uint32_t& result)>;
     void runSpace(std::uint16_t offset, const Host& host);
 
+    // Loads a mission's code (version 0x211 or 0x212) or a room's (0x111
+    // or 0x112) into `seg`. Throws FormatError.
+    void loadRoomCode(std::uint16_t seg, std::span<const std::uint8_t> file, bool room);
+    std::uint16_t word(std::uint16_t seg, std::uint16_t off) const { return cpu.read16(seg, off); }
+
+    // Runs a handler of room or mission code (a far routine at seg:off)
+    // for an event. Handlers may run handlers in turn (the host can call
+    // runHandler again from inside a command); the registers are kept
+    // across such a call. The host answers each command with its result.
+    using RoomHost = std::function<std::uint32_t(ScriptCall&)>;
+    void runHandler(std::uint16_t seg, std::uint16_t off, const std::uint8_t event[4], const RoomHost& host);
+
 private:
     std::size_t spaceSize_ = 0;
+    int depth_ = 0;
 };
 
 } // namespace helmsman::sequel

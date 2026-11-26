@@ -1,255 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "helmsman/sequel/game.hpp"
+#include "game_impl.hpp"
 
-#include "helmsman/away/assets.hpp"
-#include "helmsman/data/archive.hpp"
-#include "helmsman/data/reader.hpp"
-#include "helmsman/data/sound_bank.hpp"
-#include "helmsman/engine/pad_buttons.hpp"
-#include "helmsman/gfx/bitmap.hpp"
-#include "helmsman/sequel/machine.hpp"
-#include "helmsman/sequel/text.hpp"
-
-#include <algorithm>
-#include <cctype>
-#include <cstdio>
-#include <map>
-#include <memory>
-#include <optional>
-#include <random>
+#include <sstream>
 
 namespace helmsman::sequel {
 
-namespace {
-
-// The original counts time in ticks of the PC's clock: 18.2 a second.
-constexpr double kTickMillis = 1000.0 / 18.2065;
-
-// The crew, by their place in the list of people (DS:73D8).
-constexpr int kCrew = 8;
-// Which of them stand on the bridge, and their standing animations.
-struct Station {
-    int actor;
-    const char* anim;
-};
-constexpr Station kStations[] = {{0, "BSTNDKI"}, {1, "BSTNDSP"}, {6, "BSTNDUH"},
-                                 {5, "BSTNDCH"}, {4, "BSTNDSU"}, {7, "BSTNDSC"}};
-
-// Where the viewscreen's pictures go.
-constexpr int kViewscreenX = 0x47;
-constexpr int kViewscreenY = 0x1E;
-
-// The star systems on the star map: 20 places (x, y).
-constexpr std::uint16_t kSystems = 0x236C;
-constexpr int kSystemCount = 20;
-
-// Where the crew's menus are listed in the data segment: a name of ten
-// bytes and where the menu opens, for each of the eight.
-constexpr std::uint16_t kMenuTable = 0x025E;
-constexpr std::uint16_t kMenuEntry = 14;
-// The text colour sets.
-constexpr std::uint16_t kTextColours = 0x22FE;
-
-// Places in a person's record (0x8A bytes).
-namespace actor {
-constexpr std::uint16_t kFlags = 0x00;
-constexpr std::uint16_t kX = 0x0C;
-constexpr std::uint16_t kY = 0x0E;
-constexpr std::uint16_t kTeam = 0x45;
-constexpr std::uint16_t kName = 0x4B;
-constexpr std::uint16_t kTextSet = 0x63;
-constexpr std::uint16_t kTextX = 0x64;
-constexpr std::uint16_t kTextY = 0x66;
-} // namespace actor
-
-// Who a line is said by when it is not one of the people.
-constexpr int kViewscreenSpeaker = -3;
-constexpr int kChoiceSpeaker = -2;
-
-// The bridge's own events (the button numbers of the crew's menus).
-namespace button {
-constexpr int kKirkBeam = 0x11;
-constexpr int kSpockReport = 0x20;
-constexpr int kUhuraHail = 0x40;
-constexpr int kSuluOrbit = 0x51;
-constexpr int kChekovCourse = 0x60;
-} // namespace button
-
-// Where an event loop keeps its handlers: word offsets from the resume
-// point.
-namespace handler {
-constexpr int kHail = 0;
-constexpr int kReport = 2;
-constexpr int kTick = 4;
-constexpr int kArrived = 6;
-constexpr int kOrbit = 0x0A;
-constexpr int kBeam = 0x0C;
-} // namespace handler
-
-namespace cmd {
-constexpr int kTitles = 0x00;
-constexpr int kEndTitles = 0x07;
-constexpr int kViewscreen = 0x08;
-constexpr int kViewscreenOn = 0x09;
-constexpr int kViewscreenOff = 0x0A;
-constexpr int kSetDestination = 0x0C;
-constexpr int kEnterOrbit = 0x0D;
-constexpr int kLeaveOrbit = 0x0E;
-constexpr int kSay = 0x16;
-constexpr int kPause = 0x17;
-constexpr int kEventLoop = 0x18;
-constexpr int kAway = 0x19;
-constexpr int kEpisodeOver = 0x1A;
-constexpr int kRandom = 0x1B;
-constexpr int kMusic = 0x1C;
-constexpr int kSong = 0x1D;
-constexpr int kShowCrew = 0x26;
-constexpr int kHideCrew = 0x27;
-constexpr int kCrewFlags = 0x28;
-constexpr int kScene = 0x2D;
-constexpr int kWait = 0x30;
-constexpr int kCheckpoint = 0x33;
-constexpr int kRestored = 0x35;
-constexpr int kSpeakerAnim = 0x38;
-constexpr int kOpenBank = 0x39;
-constexpr int kCloseBanks = 0x3A;
-} // namespace cmd
-
-// Places in the data segment this file uses.
-namespace place {
-constexpr std::uint16_t kInOrbit = 0x00C4;
-constexpr std::uint16_t kUnderAttack = 0xC220;
-constexpr std::uint16_t kPauseTicks = 0x5EBE;
-} // namespace place
-
-// Default lines of the bridge crew (as the original says them when the
-// script has nothing to add).
-struct Line {
-    int who;
-    const char* text;
-};
-constexpr Line kNothingToReport{1, "#B_155#Nothing to report, Captain."};
-constexpr Line kHailing{6, "#BRIDU016#Hailing frequencies open."};
-constexpr Line kNotInOrbit{4, "#B_350#We're not in orbit Captain."};
-constexpr Line kRightNow{4, "Right now, Captain?"};
-constexpr Line kUnderAttack{1, "#B_348#Unable to comply, Captain. We're under attack."};
-constexpr Line kNotDone{1, "#B_338#May I respectfully remind the Captain that we haven't accomplished our mission, Sir."};
-constexpr Line kOrbiting{4, "#B_333#Entering standard orbit."};
-constexpr Line kLeaveOrbitFirst{4, "#B_349#We must first leave orbit, Sir."};
-
-std::string upperName(std::string_view s) {
-    std::string out(s);
-    for (auto& c : out) {
-        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    }
-    return out;
-}
-
-// A picture playing an animation (.ANM of 22-byte frames).
-struct Sprite {
-    std::string name;
-    std::vector<away::AnimFrame> frames;
-    std::size_t frame = 0;
-    double nextAt = 0;
-    bool shown = false;
-    int x = 0; // where it stands
-    int y = 0;
-    bool still = false; // shows its first frame only
-};
-
-struct MenuButton {
-    std::string picture;
-    int x = 0;
-    int y = 0;
-    int id = 0;
-};
-
-class Game {
-public:
-    Game(Platform& p, Assets& assets)
-        : p_(p), assets_(assets), m_(needProgram(assets.source())),
-          font_(SequelFont::fromBytes(assets.data().need("FONT.FON"))) {
-        std::vector<std::uint8_t> colours(SequelFont::kColours * 8);
-        for (std::size_t i = 0; i < colours.size(); ++i) {
-            colours[i] = m_.u8(static_cast<std::uint16_t>(kTextColours + i));
-        }
-        font_.setColours(colours);
-        rng_.seed(static_cast<unsigned>(p.millis));
-    }
-
-    void run();
-
-private:
-    static std::vector<std::uint8_t> needProgram(GameSource& source) {
-        auto program = source.read(programName(source.game()));
-        if (!program) {
-            throw FormatError("the game's program is missing");
-        }
-        return std::move(*program);
-    }
-
-    // Files.
-    std::optional<std::vector<std::uint8_t>> file(std::string_view name) const;
-    std::shared_ptr<const Bitmap> picture(std::string_view name);
-    const std::vector<away::AnimFrame>& anim(std::string_view name);
-    std::vector<MenuButton> menu(std::string_view name);
-
-    // Episodes.
-    void startEpisode();
-
-    // The bridge.
-    void bridge();
-    void loadBridge();
-    void tickSprites();
-    void drawSprite(const Sprite& s);
-    void drawBridge();
-    void present();
-    void setSprite(Sprite& s, std::string_view anim);
-    int crewAt(int x, int y);
-    int chooseFromMenu(int who);
-    int starMap();
-    void bridgeButton(int id);
-
-    // Time.
-    void waitTicks(int ticks);
-    void pumpTicks();
-
-    // The space script.
-    void resumeSpace(std::uint16_t at);
-    bool handle(int offset);
-    Machine::Flow spaceCommand(ScriptCall& call, std::uint32_t& result);
-    int sayStruct(std::uint16_t seg, std::uint16_t at);
-
-    // Lines and choices.
-    int say(int who, const std::vector<std::string>& texts, std::uint16_t seg);
-    void sayLine(const Line& line) { say(line.who, {line.text}, 0); }
-    void playVoice(const std::string& tag);
-
-    Platform& p_;
-    Assets& assets_;
-    Machine m_;
-    SequelFont font_;
-    std::mt19937 rng_;
-
-    std::string episodeName_;
-    std::optional<Archive> episode_;
-    std::optional<SoundBank> voices_;
-    std::map<std::string, std::shared_ptr<const Bitmap>> pictures_;
-    std::map<std::string, std::vector<away::AnimFrame>> anims_;
-
-    Palette palette_;
-    Surface background_;
-    std::array<std::uint8_t, 256> shade_{};
-    Sprite crew_[kCrew];
-    Sprite talk_[kCrew];
-    Sprite viewscreen_;
-    bool viewscreenTalks_ = false;
-    int pendingTalker_ = -100;
-    std::string pendingTalkAnim_;
-    double nextTick_ = 0;
-    int ticksDue_ = 0;
-    bool leaveBridge_ = false;
-};
+namespace detail {
 
 std::optional<std::vector<std::uint8_t>> Game::file(std::string_view name) const {
     const std::string n = upperName(name);
@@ -324,6 +80,45 @@ void Game::startEpisode() {
     pictures_.clear();
     anims_.clear();
     m_.loadSpaceScript(episode_->need(base + "S.RDF"));
+    resetCrew();
+}
+
+// What every episode starts from: the scripts' block empty, the usual
+// equipment, the crew's records with their letters, colours and names
+// (Kirk alone on the landing party).
+void Game::resetCrew() {
+    for (int i = 0; i < 0x12A; ++i) {
+        m_.set8(static_cast<std::uint16_t>(ds::kScriptBlock + i), 0);
+    }
+    m_.set8(0xC221, m_.u8(ds::kCombatLevel));
+    for (int item = 0x40; item < 0x80; ++item) {
+        m_.set8(static_cast<std::uint16_t>(0x0F5A + 10 * item), item < 0x46 ? 1 : 0);
+    }
+    struct Member {
+        char letter;
+        std::uint8_t set;
+        std::uint16_t name; // in the data segment
+    };
+    static constexpr Member kMembers[] = {{'k', 6, 0x2724}, {'s', 8, 0x2731}, {'m', 8, 0x273B},
+                                          {'r', 3, 0x2745}, {'l', 6, 0x2756}, {'c', 6, 0x275F},
+                                          {'u', 3, 0x276A}, {'y', 3, 0x2774}, {'b', 8, 0x277E}};
+    for (int i = 0; i < 32; ++i) {
+        const auto r = static_cast<std::uint16_t>(ds::kActors + i * ds::kActorSize);
+        m_.set8(static_cast<std::uint16_t>(r + 0x48), 0);
+        m_.set8(static_cast<std::uint16_t>(r + actor::kTeam), 0);
+        m_.set8(r, static_cast<std::uint8_t>(m_.u8(r) & ~8));
+    }
+    for (int i = 0; i < 9; ++i) {
+        const auto r = static_cast<std::uint16_t>(ds::kActors + i * ds::kActorSize);
+        const Member& mb = kMembers[i];
+        m_.set8(static_cast<std::uint16_t>(r + 0x48), static_cast<std::uint8_t>(mb.letter));
+        m_.set8(static_cast<std::uint16_t>(r + actor::kTextSet), mb.set);
+        m_.set16(static_cast<std::uint16_t>(r + actor::kTextX), 0);
+        m_.set16(static_cast<std::uint16_t>(r + actor::kTextY), 0);
+        m_.set16(static_cast<std::uint16_t>(r + 0x68), 0);
+        m_.setText(static_cast<std::uint16_t>(r + actor::kName), m_.text(mb.name, 24), 24);
+    }
+    m_.set8(static_cast<std::uint16_t>(ds::kActors + actor::kTeam), 0xBD);
 }
 
 void Game::setSprite(Sprite& s, std::string_view name) {
@@ -409,9 +204,19 @@ void Game::pumpTicks() {
     if (nextTick_ == 0) {
         nextTick_ = now;
     }
+    int fresh = 0;
     while (now >= nextTick_) {
         nextTick_ += kTickMillis;
         ++ticksDue_;
+        ++fresh;
+    }
+    if (away_) {
+        // People in a room move on with every tick, also while a script
+        // waits.
+        for (int i = 0; i < std::min(fresh, 4); ++i) {
+            ++awayTicks_;
+            advanceBodies();
+        }
     }
 }
 
@@ -680,6 +485,7 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
             viewscreen_.still = false;
         }
         playVoice(voice);
+        speaking_ = true;
     }
 
     std::vector<std::string> rows;
@@ -697,7 +503,7 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
     p_.keys.clear();
     int keyChoice = 0;
     while (!p_.quit) {
-        drawBridge();
+        drawScene();
         const std::size_t first = choice ? 0 : page * kRowsPerPage;
         const std::size_t count = choice ? rows.size() : std::min<std::size_t>(kRowsPerPage, rows.size() - first);
         std::size_t widest = name.size();
@@ -788,6 +594,7 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
         viewscreen_.still = viewscreenTalks_;
         pendingTalker_ = -100;
         pendingTalkAnim_.clear();
+        speaking_ = false;
     }
     p_.pointerTargets.clear();
     return std::max(0, picked);
@@ -868,7 +675,7 @@ Machine::Flow Game::spaceCommand(ScriptCall& c, std::uint32_t& result) {
         m_.set16(ds::kRoom, c.arg(1));
         m_.set16(ds::kSpawn, c.arg(2));
         m_.set16(place::kPauseTicks, 1);
-        say(-1, {"(Away missions are not playable yet.)"}, 0);
+        awayPending_ = true;
         return Machine::Flow::Yield;
     case cmd::kEpisodeOver:
         leaveBridge_ = true;
@@ -1019,6 +826,15 @@ void Game::bridge() {
     leaveBridge_ = false;
     p_.pointerShown = true;
     while (!p_.quit && !leaveBridge_) {
+        if (awayPending_) {
+            // To an away mission, and back to the bridge after it.
+            awayPending_ = false;
+            awayMission();
+            loadBridge();
+            ticksDue_ = 0;
+            p_.pointerShown = true;
+            p_.pointer = Surface{0, 0};
+        }
         // Time passes for the script: a paused script counts down, an
         // event loop gets its tick.
         while (ticksDue_ > 0 && !leaveBridge_) {
@@ -1073,6 +889,32 @@ void Game::run() {
     m_.loadSaved(*fresh);
     // A new game starts on the bridge with the first episode.
     m_.set16(ds::kState, 1);
+    if (!p_.devStart.empty()) {
+        // For the tools: straight to an away mission.
+        std::istringstream in(p_.devStart);
+        std::string ep;
+        int room = 0;
+        int spawn = -1;
+        in >> ep >> room >> spawn;
+        static const char* const kNames[] = {"fed", "sentnl", "noman", "light", "voids", "scotty", "madness", "meth"};
+        for (int i = 0; i < 8; ++i) {
+            if (ep == kNames[i]) {
+                m_.set16(ds::kEpisode, static_cast<std::uint16_t>(i));
+                m_.setText(ds::kEpisodeName, ep, 0x10);
+            }
+        }
+        startEpisode();
+        m_.set16(ds::kRoom, static_cast<std::uint16_t>(room));
+        m_.set16(ds::kSpawn, static_cast<std::uint16_t>(spawn));
+        // The usual landing party.
+        for (int i = 0; i < 3; ++i) {
+            const auto r = static_cast<std::uint16_t>(ds::kActors + i * ds::kActorSize);
+            m_.set8(static_cast<std::uint16_t>(r + actor::kTeam), 0xBD);
+            m_.set8(r, static_cast<std::uint8_t>(m_.u8(r) | 8));
+        }
+        awayMission();
+        return;
+    }
     while (!p_.quit) {
         startEpisode();
         bridge();
@@ -1092,10 +934,10 @@ void Game::run() {
     }
 }
 
-} // namespace
+} // namespace detail
 
 void playGame(Platform& platform, Assets& assets) {
-    Game game(platform, assets);
+    detail::Game game(platform, assets);
     game.run();
 }
 

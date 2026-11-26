@@ -238,8 +238,8 @@ int main(int argc, char** argv) {
                         std::printf(" %04x", m.spaceWord(static_cast<std::uint16_t>(at + 2 * i)));
                     }
                     std::printf("\n");
-                    const int pick = 4 + round < argc ? std::atoi(argv[4 + round]) : 3;
-                    (void)nextEvent;
+                    const int pick = nextEvent < argc ? std::atoi(argv[nextEvent]) : 3;
+                    ++nextEvent;
                     at = m.spaceWord(static_cast<std::uint16_t>(at + 2 * pick));
                     if (at == 0) break;
                 } else if (last == 0x1A || last == 0x07) {
@@ -732,6 +732,10 @@ int main(int argc, char** argv) {
                     }
                 }
             };
+            if (const char* start = std::getenv("HELMSMAN_START")) {
+                platform.devStart = start;
+            }
+            platform.devTrace = std::getenv("HELMSMAN_TRACE") != nullptr;
             if (std::string(argv[3]) == "GAME" && source->game() != GameId::Anniversary) {
                 try {
                     playGame(platform, *source);

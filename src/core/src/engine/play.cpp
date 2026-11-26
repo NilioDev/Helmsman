@@ -127,7 +127,9 @@ void playGame(Platform& platform, GameSource& source) {
         return;
     }
     sequel::Assets assets(source);
-    sequel::playScene(platform, assets, "TITLE");
+    if (platform.devStart.empty()) {
+        sequel::playScene(platform, assets, "TITLE");
+    }
     if (platform.quit) {
         return;
     }

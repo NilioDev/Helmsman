@@ -174,4 +174,75 @@ void Machine::runSpace(std::uint16_t offset, const Host& host) {
     c.host = nullptr;
 }
 
+void Machine::loadRoomCode(std::uint16_t seg, std::span<const std::uint8_t> file, bool room) {
+    if (file.size() < 0x30 || file.size() > 0xFFF0) {
+        throw FormatError("room code of a wrong size");
+    }
+    Reader r(file);
+    r.seek(6);
+    const auto version = r.u16();
+    const bool ok = room ? (version == 0x111 || version == 0x112) : (version == 0x211 || version == 0x212);
+    if (!ok) {
+        throw FormatError(room ? "not a room's code" : "not a mission's code");
+    }
+    std::uint8_t* base = cpu.memory() + X86::linear(seg, 0);
+    std::fill_n(base, 0x10000, 0);
+    std::copy(file.begin(), file.end(), base);
+    cpu.write16(seg, 0, kRoomEntry);
+    cpu.write16(seg, 2, X86::kHostSegment);
+    cpu.write16(seg, 4, ds::kScriptBlock);
+}
+
+void Machine::runHandler(std::uint16_t seg, std::uint16_t off, const std::uint8_t event[4], const RoomHost& host) {
+    if (depth_ > 8) {
+        throw CpuError("handlers nest too deep");
+    }
+    X86& c = cpu;
+    const auto savedR = c.r;
+    const auto savedS = c.s;
+    const auto savedIp = c.ip;
+    const auto savedFlags = c.flags;
+    auto savedHost = c.host;
+    set16(kEventBytes, event[0]);
+    set16(static_cast<std::uint16_t>(kEventBytes + 2), event[1]);
+    set16(static_cast<std::uint16_t>(kEventBytes + 4), event[2]);
+    if (depth_ == 0) {
+        c.s[X86::SS] = kStack;
+        c.r[X86::SP] = kStackTop;
+        c.r[X86::BP] = kStackTop;
+    }
+    c.s[X86::DS] = kData;
+    c.s[X86::ES] = kData;
+    c.r[X86::BX] = ds::kScriptBlock;
+    c.r[X86::SI] = ds::kScriptBlock;
+    c.host = [&](X86& m, std::uint16_t entry) {
+        if (entry != kRoomEntry) {
+            throw CpuError("room code called the game at a wrong place");
+        }
+        ScriptCall call{m, m.arg(0)};
+        const std::uint32_t result = host(call);
+        m.r[X86::AX] = static_cast<std::uint16_t>(result);
+        m.r[X86::DX] = static_cast<std::uint16_t>(result >> 16);
+    };
+    struct Restore {
+        Machine& m;
+        decltype(savedR) r;
+        decltype(savedS) s;
+        std::uint16_t ip;
+        decltype(savedFlags) flags;
+        decltype(X86::host) hostFn;
+        ~Restore() {
+            --m.depth_;
+            m.cpu.r = r;
+            m.cpu.s = s;
+            m.cpu.ip = ip;
+            m.cpu.flags = flags;
+            m.cpu.host = std::move(hostFn);
+            m.cpu.stopRequested = false;
+        }
+    } restore{*this, savedR, savedS, savedIp, savedFlags, std::move(savedHost)};
+    ++depth_;
+    c.callFar(seg, off);
+}
+
 } // namespace helmsman::sequel

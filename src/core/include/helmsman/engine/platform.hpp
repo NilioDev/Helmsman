@@ -15,6 +15,7 @@
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace helmsman {
@@ -67,6 +68,10 @@ struct Platform {
     std::uint8_t heldKey = 0; // the key held down now (its scancode), or 0
     double soundQueued[static_cast<int>(SoundChannel::Count)] = {}; // seconds still to play
     bool padInUse = false; // the gamepad moves the pointer now
+    // Set by the tools only: where to start instead of the beginning
+    // (for the second game "episode room spawn", an away mission).
+    std::string devStart;
+    bool devTrace = false; // the tools want to see what the scripts do
 
     // Set by the game, taken by the app.
     Surface screen;
