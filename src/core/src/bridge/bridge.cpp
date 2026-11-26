@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "helmsman/bridge/bridge.hpp"
 
+#include "bridge/missions.hpp"
+
 #include "helmsman/data/reader.hpp"
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/gfx/palette.hpp"
@@ -40,9 +42,29 @@ struct Speaker {
 };
 // Who speaks, in what colour, and where their boxes open.
 constexpr Speaker kSpeakers[8] = {
-    {"Captain Kirk", 0xB0, 0xA0, 0x82}, {"Mr. Spock", 0x2C, 0x126, 0x6A}, {"Dr. McCoy", 0xB0, 0x7A, 0x74},
-    {"", 0xB0, 0x7A, 0x74},             {"Mr. Sulu", 0xB0, 0x7A, 0x74},  {"Mr. Chekov", 0xB0, 0xC4, 0x74},
+    {"Captain Kirk", 0xB0, 0xA0, 0x82}, {"Mr. Spock", 0x2C, 0x126, 0x6A}, {"Dr. McCoy", 0x2C, 0xA0, 0x64},
+    {"Security Officer", 0xB0, 0x7A, 0x74}, {"Mr. Sulu", 0xB0, 0x7A, 0x74}, {"Mr. Chekov", 0xB0, 0xC4, 0x74},
     {"Lieutenant Uhura", 0xA1, 0x12A, 0x96}, {"Mr. Scott", 0xA1, 0x40, 0x64},
+};
+
+// What Scott calls each system when it is repaired.
+struct Repaired {
+    int system;
+    const char* name;
+};
+constexpr Repaired kRepairedNames[7] = {
+    {0xFF, "#BRID\\SCOTSHIE#Shields"},   {0, "#BRID\\SCOTHULL#Hull"},       {1, "#BRID\\SCOTBRID#Bridge"},
+    {6, "#BRID\\SCOTSENS#Sensors"},      {2, "#BRID\\SCOTTORP#Torpedoes"},  {4, "#BRID\\SCOTPHAS#Phasers"},
+    {7, "#BRID\\SCOTENGI#Engines"},
+};
+
+// The star systems on the star map, by number: where each is drawn.
+constexpr int kSystems[45][2] = {
+    {14, 16},   {28, 59},   {62, 32},   {102, 38},  {116, 33},  {167, 18},  {245, 27},  {263, 8},   {294, 37},
+    {260, 63},  {253, 118}, {230, 122}, {237, 93},  {220, 77},  {177, 62},  {167, 111}, {118, 79},  {90, 102},
+    {73, 111},  {111, 124}, {21, 95},   {49, 28},   {81, 153},  {40, 133},  {25, 121},  {112, 159}, {154, 169},
+    {160, 152}, {184, 135}, {213, 166}, {271, 165}, {269, 136}, {297, 145}, {303, 103}, {279, 111}, {280, 85},
+    {300, 14},  {217, 33},  {218, 55},  {166, 85},  {50, 44},   {151, 44},  {156, 16},  {83, 72},   {150, 102},
 };
 
 int randomInt(int below) {
@@ -50,23 +72,58 @@ int randomInt(int below) {
     return below <= 1 ? 0 : static_cast<int>(rng() % static_cast<unsigned>(below));
 }
 
+// The game's sound effects by number.
+const char* soundName(int number) {
+    switch (number) {
+    case 0x04: return "TRICORDE";
+    case 0x05: return "STDOOR1";
+    case 0x06: return "PHASSHOT";
+    case 0x08: return "TRANSDEM";
+    case 0x09: return "TRANSMAT";
+    case 0x0A: return "TRANSENE";
+    case 0x22: return "HAILING";
+    case 0x24: return "PHASSHOT";
+    case 0x25: return "PHOTSHOT";
+    case 0x26: return "HITSHIEL";
+    case 0x28: return "REDALERT";
+    case 0x29: return "WARP";
+    default: return nullptr;
+    }
+}
+
+// The words for a number the computer says: its voice clips, each
+// preceded by a comma, as a text's voice list wants them.
+std::string numberVoices(int n) {
+    int tens = 0;
+    int units = n;
+    if (n >= 20 && n <= 99) {
+        tens = 0xF8 + (n / 10 - 2);
+        units = n % 10;
+    } else if (n == 100) {
+        tens = 0x100;
+        units = 0;
+    }
+    std::string out;
+    char part[24];
+    if (tens != 0) {
+        std::snprintf(part, sizeof part, ",brid\\b_%03d", tens);
+        out += part;
+    }
+    if (tens == 0 || units != 0) {
+        std::snprintf(part, sizeof part, ",brid\\b_%03d", 0xE4 + units);
+        out += part;
+    }
+    return out;
+}
+
 } // namespace
 
-Bridge::Bridge(away::Session& session) : session_(session), space_(session.archive) {
+Bridge::Bridge(away::Session& session, Voyage& voyage) : session_(session), voyage_(voyage), space_(session.archive) {
     scene_.font = &session_.font;
-    load();
-    setZoom(4);
     space_.setPlayer("ENTERPRI");
     space_.report = [this](int event, int what, bool player) { report(event, what, player); };
-    space_.sound = [this](int sound) {
-        switch (sound) {
-        case 0x24: session_.playEffect("PHASSHOT"); break;
-        case 0x25: session_.playEffect("PHOTSHOT"); break;
-        case 0x26: session_.playEffect("HITSHIEL"); break;
-        default: break;
-        }
-    };
-    space_.music = [this](int song) { session_.playMusic(song); };
+    space_.sound = [this](int n) { sound(n); };
+    space_.music = [this](int song) { music(song); };
 }
 
 void Bridge::setZoom(int zoom) {
@@ -78,16 +135,278 @@ void Bridge::setZoom(int zoom) {
     }
 }
 
-void Bridge::report(int event, int, bool player) {
-    if (!player) {
+void Bridge::setFullView(bool on) {
+    // The viewscreen alone shows space wider; the bridge's own a little
+    // closer.
+    fullView_ = on;
+    setZoom(on ? 4 : 6);
+    if (!on) {
+        setControl(control_);
+    }
+}
+
+void Bridge::report(int event, int what, bool player) {
+    if (event == kRepaired) {
+        post({kRepaired, what});
         return;
     }
-    switch (event) {
-    case 2: say(kScott, "#BRID\\BRID_S45#The shields are falling!"); break;
-    case 3: say(kScott, "#BRID\\BRID_S37#Our weapons are off-line!"); break;
-    case 4: say(kScott, "#BRID\\BRID_S47#We can't maintain our speed!"); break;
-    default: break;
+    post({event, player ? 0 : 1});
+}
+
+void Bridge::music(int song) {
+    if (song < 0) {
+        session_.stopMusic();
+        return;
     }
+    session_.playMusic(song);
+}
+
+void Bridge::sound(int number) {
+    if (const char* name = soundName(number)) {
+        session_.playEffect(name);
+    }
+}
+
+std::string Bridge::text(int index) { return session_.textLine(voyage_.textFile, index); }
+
+int Bridge::sayAs(const std::string& name, const std::string& words, int x, int y, int colour, int number) {
+    away::Ui u = ui();
+    const int r = away::textBox(u, {name, words}, x, y, static_cast<std::uint8_t>(colour));
+    away::setPointer(session_, control_ ? (space_.player().weaponsArmed ? "cursor" : "entcur") : "pushbtn");
+    if (number > 0) {
+        post({kSaid, number});
+    }
+    return r;
+}
+
+int Bridge::sayAt(int officer, const std::string& words, int x, int y, int colour, int number) {
+    return sayAs(kSpeakers[std::clamp(officer, 0, 7)].name, words, x, y, colour, number);
+}
+
+int Bridge::say(int officer, const std::string& words, int number) {
+    const Speaker& s = kSpeakers[std::clamp(officer, 0, 7)];
+    return sayAs(s.name, words, s.x, s.y, s.colour, number);
+}
+
+void Bridge::showComm(const std::string& picture) {
+    static constexpr const char* kFoes[] = {"romula", "pira", "klg1", "klg2", "maddoc"};
+    for (const char* f : kFoes) {
+        if (picture == f) {
+            music(0xF);
+        }
+    }
+    if (picture == "mudd") {
+        music(0x11);
+    }
+    if (fullView_) {
+        setFullView(false);
+    }
+    comm_ = CrewMember{};
+    comm_.frames = &session_.assets.anim(picture);
+    comm_.present = !comm_.frames->empty();
+    comm_.x = kViewLeft;
+    comm_.y = kViewTop;
+    comm_.nextTick = ticks_;
+    if (comm_.present) {
+        showFrame(comm_);
+        comm_.sprite.depth = 1;
+        comm_.nextTick = ticks_ + static_cast<std::uint64_t>(comm_.frames->front().ticks);
+    }
+}
+
+void Bridge::hideComm() { comm_ = CrewMember{}; }
+
+int Bridge::comm(const std::string& picture, const std::string& name, const std::string& words) {
+    showComm(picture);
+    const int r = sayAs(name, words, 0xA0, 0xBE, 0x2C);
+    hideComm();
+    return r;
+}
+
+void Bridge::resetShip() {
+    space::Object& p = space_.player();
+    p.shieldsUp = false;
+    p.weaponsArmed = false;
+    for (auto& part : p.cls.parts) {
+        part.now = part.best;
+    }
+    for (auto& sh : p.cls.shields) {
+        sh.now = sh.best;
+    }
+    space_.repairFirst = -1;
+    setControl(control_);
+}
+
+void Bridge::clearShots() {
+    for (int i = space::Space::kFirstShot; i < space::Space::kFirstShot + space::Space::kShots; ++i) {
+        if (space_.object(i).kind == space::Kind::Shot) {
+            space_.remove(i);
+        }
+    }
+}
+
+void Bridge::orbit(bool enter, bool announce) {
+    if (announce) {
+        sayAt(kSulu, enter ? "#BRID\\B_333#Entering standard orbit." : "#BRID\\B_335#Leaving orbit.", 0x7A, 0x74, 0xB0);
+    }
+    voyage_.inOrbit = enter;
+    if (enter) {
+        space::Object& p = space_.player();
+        p.wantSpeed = 0;
+        p.speed = 0;
+        space_.steer(0, 0);
+    }
+}
+
+void Bridge::score(int mission, int textIndex, int got, int best) {
+    // The share of the best possible, and what it is worth.
+    int percent = 0;
+    if (best > 0) {
+        percent = std::clamp(got, 0, best) * 100 / best;
+    }
+    int commendations = 0;
+    int song = 0xD;
+    const char* verdict = "#BRID\\B_199#I'll be frank, Kirk. Starfleet expects more of you than that. Try to do better on your next "
+                          "assignment.";
+    if (percent >= 100) {
+        commendations = 4;
+        song = 0xE;
+        verdict = "#BRID\\B_195#A perfect mission, Jim! You are a model for all Starfleet!";
+    } else if (percent >= 86) {
+        commendations = 3;
+        song = 0xC;
+        verdict = "#BRID\\B_414#The top brass at Starfleet are impressed. Outstanding work, Jim.";
+    } else if (percent >= 71) {
+        commendations = 2;
+        song = 0xB;
+        verdict = "#BRID\\B_214#Well done, Captain. Keep up the good work.";
+    } else if (percent >= 51) {
+        commendations = 1;
+        verdict = "#BRID\\B_197#A satisfactory performance, Captain, but there's still room for improvement.";
+    }
+    music(song);
+    // The report's text has the voices of the two numbers and the numbers
+    // themselves to fill in.
+    const std::string format = text(textIndex);
+    std::string report;
+    {
+        const std::string v1 = numberVoices(percent);
+        const std::string v2 = numberVoices(commendations);
+        std::size_t used = 0;
+        int strings = 0;
+        int numbers = 0;
+        for (std::size_t i = 0; i < format.size(); ++i) {
+            const char c = format[i];
+            if (c == '%' && i + 1 < format.size()) {
+                const char k = format[i + 1];
+                if (k == 's') {
+                    report += strings++ == 0 ? v1 : v2;
+                    ++i;
+                    continue;
+                }
+                if (k == 'd') {
+                    report += std::to_string(numbers++ == 0 ? percent : commendations);
+                    ++i;
+                    continue;
+                }
+                if (k == '%') {
+                    report += '%';
+                    ++i;
+                    continue;
+                }
+            }
+            report += c;
+            ++used;
+        }
+    }
+    showComm("woman");
+    sayAs("Admiral", report, 0xA0, 0xBE, 0x2C);
+    sayAs("Admiral", verdict, 0xA0, 0xBE, 0x2C);
+    if (mission != kVeng) {
+        hideComm();
+    }
+    voyage_.lastScored = mission;
+    voyage_.commendations[static_cast<std::size_t>(std::clamp(mission, 0, kMissionCount - 1))] = commendations;
+    voyage_.rating += commendations / 2;
+    voyage_.points += commendations * 15;
+    // Starfleet rewards a crew with a better ship.
+    space::Object& p = space_.player();
+    for (int i = 0; i < 4; ++i) {
+        p.cls.parts[static_cast<std::size_t>(space::kPortTorpedoes + i)].best += commendations / 4;
+    }
+    for (auto& sh : p.cls.shields) {
+        sh.best += commendations / 2;
+    }
+}
+
+void Bridge::flyby(const std::string& title, const std::string& voice, int stage) {
+    voyage_.flyby = true;
+    voyage_.flybyTitle = title;
+    voyage_.flybyVoice = voice;
+    voyage_.flybyStage = stage;
+    voyage_.busy = true;
+    music(0xB);
+    session_.playEffect("BRIDLOOP", true);
+    setFullView(true);
+    space_.resetStars();
+    space::Object& p = space_.player();
+    p.axes = space::Mat::identity();
+    space::yaw(p.axes, 0x100);
+    p.wantSpeed = 0;
+    p.speed = 0;
+    p.velocity = {};
+    space_.watchFrom({1974, 0, 720});
+}
+
+void Bridge::flybyEvent(const Event& e) {
+    if (e.type == kTick) {
+        // The ship flies along x, the watcher a little slower beside it.
+        const std::int32_t t = static_cast<std::int32_t>(voyage_.clock);
+        space::Object& p = space_.player();
+        if (voyage_.clock <= 0x69) {
+            p.pos = {125 * t, 0, 0};
+            space_.watchFrom({100 * t + 1974, 0, 720});
+        }
+        switch (voyage_.clock) {
+        case 2:
+            space_.resetStars();
+            break;
+        case 0x41:
+            if (!voyage_.flybyVoice.empty()) {
+                session_.playSpeech(voyage_.flybyVoice);
+            }
+            break;
+        case 0x5F:
+            try {
+                auto b = std::make_shared<Bitmap>(Bitmap::fromBytes(session_.archive.need(away::upper(voyage_.flybyTitle) + ".BMP")));
+                b->handleX = b->width() / 2;
+                b->handleY = b->height() / 2;
+                title_.bitmap = b;
+                title_.x = 0xA0;
+                title_.y = 0x3C;
+                title_.depth = 0;
+                showTitle_ = true;
+            } catch (const FormatError&) {
+            }
+            break;
+        case 0x69: {
+            showTitle_ = false;
+            space_.watchFromBridge();
+            setFullView(false);
+            p.wantSpeed = p.cls.maxSpeed / 2;
+            break;
+        }
+        case 0x96:
+            voyage_.flyby = false;
+            voyage_.stage = voyage_.flybyStage;
+            voyage_.busy = false;
+            setControl(true);
+            break;
+        default:
+            break;
+        }
+    }
+    defaultEvent(e);
 }
 
 void Bridge::panelPicture(const std::string& name, bool opaque, int recolour) {
@@ -256,11 +575,11 @@ void Bridge::drawHud() {
 }
 
 void Bridge::steer() {
-    if (inOrbit) {
+    if (voyage_.inOrbit || voyage_.flyby) {
         return;
     }
     const Platform& p = session_.platform;
-    if (control_) {
+    if (control_ && !voyage_.busy) {
         space_.steer(p.mouseX - space_.centreX(), p.mouseY - space_.centreY());
     }
     space_.setRoll(p.heldKey == 0x52 ? 1 : (p.heldKey == 0x53 ? -1 : 0));
@@ -279,12 +598,14 @@ void Bridge::load() {
     if (const auto pri = archive.load("BRIDGE.PRI")) {
         scene_.setDepths(*pri);
     }
-    placeCrew(kKirk, "bstndki", 0, 4);
-    placeCrew(kSpock, "bstndsp", 0, 0);
-    placeCrew(kUhura, "bstnduh", 0, 0);
-    placeCrew(kChekov, "bstndch", 0, 0);
-    placeCrew(kSulu, "bstndsu", 0, 0);
-    placeCrew(kScott, "bstndsc", 0, 0);
+    if (!crew_[kKirk].present) {
+        placeCrew(kKirk, "bstndki", 0, 4);
+        placeCrew(kSpock, "bstndsp", 0, 0);
+        placeCrew(kUhura, "bstnduh", 0, 0);
+        placeCrew(kChekov, "bstndch", 0, 0);
+        placeCrew(kSulu, "bstndsu", 0, 0);
+        placeCrew(kScott, "bstndsc", 0, 0);
+    }
 
     // A light that runs along the console under the viewscreen.
     Bitmap light;
@@ -298,7 +619,7 @@ void Bridge::load() {
 }
 
 void Bridge::placeCrew(int officer, const std::string& anim, int x, int y) {
-    CrewMember& c = crew_[static_cast<std::size_t>(officer)];
+    CrewMember& c = crew_[static_cast<std::size_t>(std::clamp(officer, 0, 7))];
     std::string name = anim;
     if (session_.archive.has(away::upper(name) + "J.ANM")) {
         name += "j";
@@ -315,6 +636,8 @@ void Bridge::placeCrew(int officer, const std::string& anim, int x, int y) {
     }
 }
 
+void Bridge::removeCrew(int officer) { crew_[static_cast<std::size_t>(std::clamp(officer, 0, 7))] = CrewMember{}; }
+
 void Bridge::showFrame(CrewMember& c) {
     const away::AnimFrame& f = (*c.frames)[static_cast<std::size_t>(c.frame)];
     try {
@@ -328,22 +651,33 @@ void Bridge::showFrame(CrewMember& c) {
     c.sprite.mode = away::SpriteMode::Normal;
 }
 
+void Bridge::animate(CrewMember& c) {
+    if (!c.present || c.frames == nullptr || c.frames->empty() || ticks_ < c.nextTick) {
+        return;
+    }
+    const int count = static_cast<int>(c.frames->size());
+    const int next = (*c.frames)[static_cast<std::size_t>(std::min(c.frame, count - 1))].next[randomInt(4)];
+    c.frame = next < count ? next : 0;
+    showFrame(c);
+    c.nextTick = ticks_ + static_cast<std::uint64_t>(std::max(1, (*c.frames)[static_cast<std::size_t>(c.frame)].ticks));
+}
+
 void Bridge::updateCrew() {
     for (auto& c : crew_) {
-        if (!c.present || c.frames == nullptr || c.frames->empty() || ticks_ < c.nextTick) {
-            continue;
-        }
-        const int count = static_cast<int>(c.frames->size());
-        const int next = (*c.frames)[static_cast<std::size_t>(std::min(c.frame, count - 1))].next[randomInt(4)];
-        c.frame = next < count ? next : 0;
-        showFrame(c);
-        c.nextTick = ticks_ + static_cast<std::uint64_t>(std::max(1, (*c.frames)[static_cast<std::size_t>(c.frame)].ticks));
+        animate(c);
     }
+    const int depth = comm_.sprite.depth;
+    animate(comm_);
+    comm_.sprite.depth = depth;
 }
 
 void Bridge::drawFrame() {
+    Surface& screen = session_.platform.screen;
     if (fullView_) {
-        space_.draw(session_.platform.screen);
+        space_.draw(screen);
+        if (showTitle_ && title_.bitmap) {
+            scene_.drawSprite(screen, title_);
+        }
         return;
     }
     space_.draw(scene_.backdrop);
@@ -352,21 +686,25 @@ void Bridge::drawFrame() {
     if (radar_.bitmap) {
         sprites.push_back(&radar_);
     }
+    if (comm_.present && comm_.sprite.bitmap) {
+        sprites.push_back(&comm_.sprite);
+    }
     for (const auto& c : crew_) {
         if (c.present && c.sprite.bitmap) {
             sprites.push_back(&c.sprite);
         }
     }
     sprites.push_back(&light_);
-    scene_.draw(session_.platform.screen, sprites);
+    scene_.draw(screen, sprites);
 }
 
-void Bridge::tick() {
+void Bridge::simulate() {
     ++ticks_;
     steer();
-    if (!inOrbit) {
+    if (!voyage_.inOrbit) {
         space_.tick();
     }
+    voyage_.underAttack = space_.enemiesLeft();
     updateCrew();
     if ((ticks_ & 3) == 0) {
         lightStep_ = (lightStep_ + 1) % 22;
@@ -375,20 +713,18 @@ void Bridge::tick() {
 }
 
 void Bridge::advance() {
-    tick();
+    post({kTick});
+    ++voyage_.clock;
+    while (!events_.empty() && !result_) {
+        const Event e = events_.front();
+        events_.pop_front();
+        dispatch(e);
+    }
     drawFrame();
 }
 
 away::Ui Bridge::ui() {
     return away::Ui{session_, scene_, [this] { drawFrame(); }};
-}
-
-int Bridge::say(int officer, const std::string& text) {
-    const Speaker& s = kSpeakers[std::clamp(officer, 0, 7)];
-    away::Ui u = ui();
-    const int r = away::textBox(u, {s.name, text}, s.x, s.y, s.colour);
-    away::setPointer(session_, control_ ? (space_.player().weaponsArmed ? "cursor" : "entcur") : "pushbtn");
-    return r;
 }
 
 void Bridge::setControl(bool on) {
@@ -421,7 +757,7 @@ void Bridge::clampPointer() {
 void Bridge::leftClick() {
     Platform& p = session_.platform;
     if (control_) {
-        actions_.push_back(kFirePhasers);
+        post({kOrder, kFirePhasers});
         return;
     }
     std::vector<const away::Sprite*> sprites;
@@ -444,7 +780,7 @@ void Bridge::leftClick() {
             const int choice = away::buttonMenu(u, kMenus[i].menu, kMenus[i].x, kMenus[i].y, 0);
             away::setPointer(session_, "pushbtn");
             if (choice >= 0) {
-                actions_.push_back(choice);
+                post({kOrder, choice});
             }
             return;
         }
@@ -456,10 +792,15 @@ void Bridge::handleInput() {
     Platform& p = session_.platform;
     clampPointer();
     const std::uint8_t clicks = p.takeClicks();
+    if (voyage_.busy) {
+        // A scene runs: the player only watches (and may skip speech).
+        p.keys.clear();
+        return;
+    }
     if ((clicks & 1) != 0) {
         leftClick();
     } else if ((clicks & 2) != 0 && control_) {
-        actions_.push_back(kFireTorpedoes);
+        post({kOrder, kFireTorpedoes});
     }
     while (!p.keys.empty()) {
         const KeyPress key = p.keys.front();
@@ -472,7 +813,7 @@ void Bridge::handleInput() {
         case scancode::kEnter:
         case scancode::kF1:
             if (control_) {
-                actions_.push_back(kFirePhasers);
+                post({kOrder, kFirePhasers});
             } else {
                 leftClick();
             }
@@ -480,26 +821,28 @@ void Bridge::handleInput() {
         case scancode::kSpace:
         case 0x3C: // F2
             if (control_) {
-                actions_.push_back(kFireTorpedoes);
+                post({kOrder, kFireTorpedoes});
             }
             break;
-        case 0x11: actions_.push_back(kWeapons); break;        // W
-        case 0x1F: actions_.push_back(kShields); break;        // S
-        case 0x12: actions_.push_back(kRepairMenu); break;     // E
-        case 0x20: actions_.push_back(kDamageReport); break;   // D
-        case 0x1E: actions_.push_back(kTargetAnalysis); break; // A
-        case 0x23: actions_.push_back(kHail); break;           // H
-        case 0x14: actions_.push_back(kSpockTalk); break;      // T
-        case 0x25: actions_.push_back(kKirkMenu); break;       // K
-        case 0x18: actions_.push_back(kOrbit); break;          // O
-        case 0x2F: actions_.push_back(kToggleViewscreen); break; // V
-        case 0x31: actions_.push_back(kStarMap); break;        // N
-        case 0x2E: actions_.push_back(kComputer); break;       // C
+        case 0x11: post({kOrder, kWeapons}); break;        // W
+        case 0x1F: post({kOrder, kShields}); break;        // S
+        case 0x12: post({kOrder, kRepairMenu}); break;     // E
+        case 0x20: post({kOrder, kDamageReport}); break;   // D
+        case 0x1E: post({kOrder, kTargetAnalysis}); break; // A
+        case 0x23: post({kOrder, kHail}); break;           // H
+        case 0x14: post({kOrder, kSpockTalk}); break;      // T
+        case 0x25: post({kOrder, kKirkMenu}); break;       // K
+        case 0x18: post({kOrder, kOrbit}); break;          // O
+        case 0x2F: post({kOrder, kToggleViewscreen}); break; // V
+        case 0x31: post({kOrder, kStarMap}); break;        // N
+        case 0x2E: post({kOrder, kComputer}); break;       // C
+        case 0x2D: post({kOrder, kTransporter}); break;    // X
+        case 0x26: post({kOrder, kCaptainsLog}); break;    // L
         case scancode::kEscape:
-            actions_.push_back(kOptions);
+            post({kOrder, kOptions});
             break;
         case 0x29: // `: full speed backwards
-            if (!inOrbit) space_.fullReverse();
+            if (!voyage_.inOrbit) space_.fullReverse();
             break;
         case 0x4C: // keypad 5: stop turning
             space_.steer(0, 0);
@@ -519,7 +862,7 @@ void Bridge::handleInput() {
             say(kSulu, "Magnification " + std::to_string(zoom_ - 3));
             break;
         default:
-            if (key.scancode >= 0x02 && key.scancode <= 0x0B && !inOrbit) {
+            if (key.scancode >= 0x02 && key.scancode <= 0x0B && !voyage_.inOrbit) {
                 space_.setSpeedLevel(key.scancode - 0x02); // 1 stops, 0 is full speed
             }
             break;
@@ -527,19 +870,62 @@ void Bridge::handleInput() {
     }
 }
 
-void Bridge::doAction(int action) {
-    // Missions answer here first, once they are played on the bridge.
-    defaultAction(action);
+void Bridge::dispatch(const Event& e) {
+    if (voyage_.flyby) {
+        flybyEvent(e);
+        return;
+    }
+    if (voyage_.encounter != 0) {
+        encounterEvent(*this, e);
+        return;
+    }
+    missionEvent(*this, e);
+}
+
+void Bridge::defaultEvent(const Event& e) {
+    switch (e.type) {
+    case kTick:
+        simulate();
+        break;
+    case kOrder:
+        defaultAction(e.what);
+        break;
+    case kShieldsFalling:
+        if (e.what == 0) {
+            sayAt(kScott, "#BRID\\BRID_S45#The shields are falling!", 0, 0xA0, 0xA1);
+        }
+        break;
+    case kWeaponsOffLine:
+        if (e.what == 0) {
+            sayAt(kScott, "#BRID\\BRID_S37#Our weapons are off-line!", 0, 0xA0, 0xA1);
+        }
+        break;
+    case kSpeedFalling:
+        if (e.what == 0) {
+            sayAt(kScott, "#BRID\\BRID_S47#We can't maintain our speed!", 0, 0xA0, 0xA1);
+        }
+        break;
+    case kRepaired:
+        for (const auto& r : kRepairedNames) {
+            if (r.system == e.what || (e.what == 0x7FFF && r.system == 0xFF)) {
+                sayAt(kScott, std::string(r.name) + " repaired, Captain.", 0x40, 0x64, 0xA1);
+            }
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 void Bridge::defaultAction(int action) {
+    space::Object& player = space_.player();
     switch (action) {
     case kKirkMenu: {
         away::Ui u = ui();
         const int choice = away::buttonMenu(u, "command", 60, 100, 0);
         away::setPointer(session_, control_ ? "entcur" : "pushbtn");
         if (choice >= 0) {
-            actions_.push_back(choice);
+            post({kOrder, choice});
         }
         break;
     }
@@ -559,7 +945,7 @@ void Bridge::defaultAction(int action) {
             away::Ui q = ui();
             if (away::textBox(q, {"Quit Game", "#GENE\\GENER028#Yes, quit the game.", "#GENE\\GENER008#No, do not quit the game."},
                               0x14, 0x14, 0xB0) == 0) {
-                result_ = BridgeResult{true, -1};
+                result_ = BridgeResult{Leave::Quit, -1};
             }
             break;
         }
@@ -568,65 +954,105 @@ void Bridge::defaultAction(int action) {
         break;
     }
     case kSpockTalk:
-        say(kSpock, "#BRID\\B_155#Nothing to report, Captain.");
+        sayAt(kSpock, "#BRID\\B_155#Nothing to report, Captain.", 0x126, 0x6A, 0x2C);
         break;
     case kHail:
-        say(kUhura, "#BRID\\BRIDU016#Hailing frequencies open.");
+        sayAt(kUhura, "#BRID\\BRIDU016#Hailing frequencies open.", 0x12A, 0x96, 0xA1);
         break;
     case kFirePhasers:
-        if (!inOrbit) {
+        if (!voyage_.inOrbit) {
             const Platform& p = session_.platform;
             space_.firePhasers(control_ ? p.mouseX : space_.centreX(), control_ ? p.mouseY : space_.centreY());
         }
         break;
     case kFireTorpedoes:
-        if (!inOrbit) {
+        if (!voyage_.inOrbit) {
             const Platform& p = session_.platform;
             space_.fireTorpedoes(control_ ? p.mouseX : space_.centreX(), control_ ? p.mouseY : space_.centreY());
         }
         break;
     case kToggleViewscreen:
-        fullView_ = !fullView_;
-        setZoom(zoom_);
+        setFullView(!fullView_);
         if (!fullView_) {
-            setControl(control_);
+            setControl(true);
         }
         break;
-    case kShields: {
-        bool& up = space_.player().shieldsUp;
-        up = !up;
-        say(kSulu, up ? "#BRID\\B_340#Raising shields." : "#BRID\\B_337#Lowering shields, Captain.");
+    case kShields:
+        player.shieldsUp = !player.shieldsUp;
+        sayAt(kSulu, player.shieldsUp ? "#BRID\\B_340#Raising shields." : "#BRID\\B_337#Lowering shields, Captain.", 0x7A, 0x74, 0xB0);
         break;
-    }
-    case kWeapons: {
-        bool& armed = space_.player().weaponsArmed;
-        armed = !armed;
-        say(kChekov, armed ? "#BRID\\B_351#Arming weapons." : "#BRID\\B_354#Disarming weapons.");
+    case kWeapons:
+        player.weaponsArmed = !player.weaponsArmed;
+        sayAt(kChekov, player.weaponsArmed ? "#BRID\\B_351#Arming weapons." : "#BRID\\B_354#Disarming weapons.", 0xC4, 0x74, 0xB0);
+        setControl(control_);
         break;
-    }
-    case kRepairFirst + 0: space_.repairFirst = 0x7FFF; say(kScott, "#BRID\\BRID_S22#Aye Sir."); break;
-    case kRepairFirst + 1: space_.repairFirst = space::kPortPhasers; say(kScott, "#BRID\\BRID_S22#Aye Sir."); break;
-    case kRepairFirst + 2: space_.repairFirst = space::kPortTorpedoes; say(kScott, "#BRID\\BRID_S22#Aye Sir."); break;
-    case kRepairFirst + 3: space_.repairFirst = space::kSensors; say(kScott, "#BRID\\BRID_S22#Aye Sir."); break;
-    case kRepairFirst + 4: space_.repairFirst = space::kBridge; say(kScott, "#BRID\\BRID_S22#Aye Sir."); break;
-    case kRepairFirst + 5: space_.repairFirst = space::kHull; say(kScott, "#BRID\\BRID_S22#Aye Sir."); break;
-    case kRepairFirst + 6: space_.repairFirst = space::kImpulse; say(kScott, "#BRID\\BRID_S22#Aye Sir."); break;
+    case kRepairFirst + 0: space_.repairFirst = 0x7FFF; break;
+    case kRepairFirst + 1: space_.repairFirst = space::kPortPhasers; break;
+    case kRepairFirst + 2: space_.repairFirst = space::kPortTorpedoes; break;
+    case kRepairFirst + 3: space_.repairFirst = space::kSensors; break;
+    case kRepairFirst + 4: space_.repairFirst = space::kBridge; break;
+    case kRepairFirst + 5: space_.repairFirst = space::kHull; break;
+    case kRepairFirst + 6: space_.repairFirst = space::kImpulse; break;
     case kTargetAnalysis:
         targetAnalysis_ = !targetAnalysis_;
-        say(kSulu, targetAnalysis_ ? "#BRID\\B_344#Target Analysis On." : "#BRID\\B_343#Target Analysis Off.");
+        sayAt(kSulu, targetAnalysis_ ? "#BRID\\B_344#Target Analysis On." : "#BRID\\B_343#Target Analysis Off.", 0x7A, 0x74, 0xB0);
         break;
     case kTransporter:
-        say(kSulu, "#BRID\\B_350#We're not in orbit, Captain.");
+        if (player.shieldsUp) {
+            sayAt(kSulu, "#BRID\\B_332#Captain, the shields are up.", 0x7A, 0x74, 0xA1);
+        } else if (!voyage_.inOrbit) {
+            sayAt(kSulu, "#BRID\\B_350#We're not in orbit, Captain.", 0x7A, 0x74, 0xA1);
+        } else if (voyage_.system == voyage_.destination) {
+            if (voyage_.mission == kFeather) {
+                sayAt(kKirk, "#BRID\\C_006#Assemble a landing party. Unless we find this so-called criminal, we're going to war.", 0xA0, 0x82,
+                      0xB0);
+            } else if (voyage_.mission != kVeng) {
+                sayAt(kKirk, "#BRID\\C_060#Spock, come with me. Mr Scott, you have the conn.", 0xA0, 0x82, 0xB0);
+            }
+            beamDown();
+        } else {
+            sayAt(kSulu, "#BRID\\B_346#This isn't our destination.", 0x7A, 0x74, 0xB0);
+        }
         break;
     case kOrbit:
-        say(kSulu, "#BRID\\B_346#This isn't our destination.");
+        if (voyage_.underAttack) {
+            sayAt(kSulu, "#BRID\\B_348#Unable to comply, Captain. We're under attack.", 0x7A, 0x74, 0xB0);
+        } else if (voyage_.system == voyage_.destination && !voyage_.inOrbit) {
+            orbit(true, true);
+        } else {
+            sayAt(kSulu, "#BRID\\B_338#May I respectfully remind the Captain that we haven't accomplished our mission, Sir.", 0x7A, 0x74,
+                  0x2C);
+        }
+        break;
+    case kStarMap:
+        if (voyage_.underAttack) {
+            sayAt(kSulu, "#BRID\\B_348#Unable to comply, Captain.  We're under attack.", 0x7A, 0x74, 0xB0);
+        } else if (voyage_.system == voyage_.destination) {
+            sayAt(kSulu, "#BRID\\B_338#May I respectfully remind the Captain that we haven't accomplished our mission, Sir.", 0x7A, 0x74,
+                  0x2C);
+        } else if (voyage_.inOrbit) {
+            sayAt(kSulu, "#BRID\\B_349#We must first leave orbit, Sir.", 0x7A, 0x74, 0xB0);
+        } else {
+            starMap();
+            space_.resetStars();
+        }
         break;
     case kRepairMenu: {
         away::Ui u = ui();
         const int choice = away::buttonMenu(u, "repair", 0x1E, 0x1E, 0);
         away::setPointer(session_, "pushbtn");
         if (choice >= 0) {
-            actions_.push_back(choice);
+            post({kOrder, choice});
+        }
+        break;
+    }
+    case kDamageReport: {
+        // Scott judges by the hull.
+        const space::Part& hull = player.cls.parts[space::kHull];
+        if (hull.now * 2 > hull.best) {
+            sayAt(kScott, "#BRID\\BRID_S32#I don't know how long she can take it, Captain.", 0x40, 0x64, 0xA1);
+        } else {
+            sayAt(kScott, "#BRID\\BRID_S41#She can't take it, Captain.", 0x40, 0x64, 0xA1);
         }
         break;
     }
@@ -635,24 +1061,91 @@ void Bridge::defaultAction(int action) {
     }
 }
 
-BridgeResult Bridge::run() {
+void Bridge::starMap() {
+    // The map fills the screen; the system nearest the pointer is circled
+    // and a click (or Enter) sets course for it.
     Platform& p = session_.platform;
-    p.pointerShown = true;
-    setControl(false);
-    session_.loadMusic("bridge");
-    session_.playMusic(0);
-    while (!result_) {
-        handleInput();
-        while (!actions_.empty() && !result_) {
-            const int a = actions_.front();
-            actions_.pop_front();
-            doAction(a);
+    const Palette saved = p.palette;
+    Surface map(Surface::kScreenWidth, Surface::kScreenHeight);
+    map.fill(0);
+    try {
+        Bitmap::fromBytes(session_.archive.need("STARMAP.BMP")).copyTo(map, 0, 0);
+    } catch (const FormatError&) {
+    }
+    std::shared_ptr<const Bitmap> circle;
+    try {
+        circle = session_.assets.picture("circle");
+    } catch (const FormatError&) {
+    }
+    away::setPointer(session_, "cross");
+    p.takeClicks();
+    p.keys.clear();
+    int chosen = 0;
+    while (!p.quit) {
+        int best = 0x7FFF;
+        for (int i = 0; i < 45; ++i) {
+            const int d = std::abs(kSystems[i][0] - p.mouseX) + std::abs(kSystems[i][1] - p.mouseY);
+            if (d < best) {
+                best = d;
+                chosen = i;
+            }
         }
-        if (p.quit) {
-            return BridgeResult{true, -1};
+        p.screen.blit(map, 0, 0, Surface::kScreenWidth, Surface::kScreenHeight, 0, 0);
+        if (circle) {
+            away::Sprite s;
+            s.bitmap = circle;
+            s.x = kSystems[chosen][0];
+            s.y = kSystems[chosen][1];
+            s.mode = away::SpriteMode::Overlay;
+            away::Scene plain;
+            plain.drawSprite(p.screen, s);
         }
         session_.waitTick();
-        tick();
+        bool done = (p.takeClicks() & 1) != 0;
+        while (!p.keys.empty()) {
+            const std::uint8_t k = p.keys.front().scancode;
+            p.keys.pop_front();
+            if (k == scancode::kEnter || k == scancode::kSpace || k == scancode::kF1 || k == 0x3C) {
+                done = true;
+            }
+        }
+        if (done) {
+            break;
+        }
+    }
+    p.palette = saved;
+    setControl(control_);
+    // Warp to it.
+    sound(0x29);
+    voyage_.system = chosen;
+    voyage_.inOrbit = false;
+    if (voyage_.system != voyage_.destination) {
+        startEncounter(*this);
+    }
+}
+
+BridgeResult Bridge::run() {
+    Platform& p = session_.platform;
+    result_.reset();
+    load();
+    p.pointerShown = true;
+    session_.loadMusic("bridge");
+    setFullView(fullView_);
+    setControl(true);
+    while (!result_) {
+        if (p.quit) {
+            return BridgeResult{Leave::Quit, -1};
+        }
+        session_.waitTick();
+        p.pointerShown = !voyage_.flyby;
+        post({kTick});
+        ++voyage_.clock;
+        handleInput();
+        while (!events_.empty() && !result_) {
+            const Event e = events_.front();
+            events_.pop_front();
+            dispatch(e);
+        }
         drawFrame();
     }
     return *result_;

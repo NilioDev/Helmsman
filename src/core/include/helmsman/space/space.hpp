@@ -215,6 +215,16 @@ public:
 
     std::mt19937& random() { return rng_; }
 
+    // Watches from `where` instead of from the player's bridge, turned
+    // towards the player's ship (which is then drawn too). Off by default.
+    void watchFrom(const Vec& where) {
+        outside_ = true;
+        outsidePos_ = where;
+    }
+    void watchFromBridge() { outside_ = false; }
+    // Forgets the stars, so that new ones are scattered.
+    void resetStars();
+
 private:
     void loadPictures();
     std::shared_ptr<const Bitmap> picture(const std::string& name);
@@ -266,6 +276,9 @@ private:
 
     Vec camera_;
     Mat cameraAxes_ = Mat::identity();
+
+    bool outside_ = false;
+    Vec outsidePos_;
 
     std::uint64_t ticks_ = 0;
     bool playerDead_ = false;

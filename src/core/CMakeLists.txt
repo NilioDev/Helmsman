@@ -12,6 +12,7 @@ add_library(helmsman::core ALIAS hlm_core)
 target_include_directories(hlm_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(hlm_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(hlm_core PUBLIC cxx_std_20)
 set_target_properties(hlm_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 find_package(Threads REQUIRED)

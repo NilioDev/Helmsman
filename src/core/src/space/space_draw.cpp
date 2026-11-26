@@ -40,8 +40,36 @@ int Space::project(std::int32_t v, std::int32_t z) const {
 }
 
 void Space::placeCamera() {
-    camera_ = player().pos;
-    cameraAxes_ = player().axes;
+    if (!outside_) {
+        camera_ = player().pos;
+        cameraAxes_ = player().axes;
+        return;
+    }
+    // Looking at the player's ship: forward towards it, up as near the
+    // world's up as can be.
+    camera_ = outsidePos_;
+    const Vec f = unit(player().pos - camera_);
+    const double fx = f.x / double(kOne), fy = f.y / double(kOne), fz = f.z / double(kOne);
+    // right = up x forward, with up = (0, 1, 0)
+    double rx = fz, ry = 0, rz = -fx;
+    double rl = std::sqrt(rx * rx + rz * rz);
+    if (rl < 1e-6) {
+        rx = 1;
+        rz = 0;
+        rl = 1;
+    }
+    rx /= rl;
+    rz /= rl;
+    // up = forward x right
+    const double ux = fy * rz - fz * ry, uy = fz * rx - fx * rz, uz = fx * ry - fy * rx;
+    auto q = [](double v) { return static_cast<std::int16_t>(std::lround(v * kOne)); };
+    cameraAxes_.m = {q(rx), q(ry), q(rz), q(ux), q(uy), q(uz), q(fx), q(fy), q(fz)};
+}
+
+void Space::resetStars() {
+    for (auto& s : stars_) {
+        s.live = false;
+    }
 }
 
 void Space::lookAt(Object& o) {
@@ -364,7 +392,7 @@ void Space::draw(Surface& to) {
             }
             o.cloakLevel = o.cloaked ? std::min(o.cloakLevel + 1, 28) : std::max(o.cloakLevel - 1, 0);
         }
-        if (i == kPlayer) {
+        if (i == kPlayer && !outside_) {
             continue;
         }
         lookAt(o);

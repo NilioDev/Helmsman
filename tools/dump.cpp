@@ -18,6 +18,7 @@
 #include "helmsman/audio/adlib.hpp"
 #include "helmsman/away/mission.hpp"
 #include "helmsman/bridge/bridge.hpp"
+#include "helmsman/engine/play.hpp"
 #include "helmsman/space/space.hpp"
 #include "helmsman/engine/fiber.hpp"
 #include "helmsman/data/archive.hpp"
@@ -200,8 +201,15 @@ int main(int argc, char** argv) {
             away::Session session(platform, *source);
             session.trace = std::getenv("HELMSMAN_TRACE") != nullptr;
             try {
-                if (std::string(argv[3]) == "BRIDGE") {
-                    bridge::Bridge b(session);
+                if (std::string(argv[3]) == "GAME") {
+                    playGame(platform, *source);
+                    std::printf("game ended\n");
+                } else if (std::string(argv[3]) == "BRIDGE") {
+                    static bridge::Voyage voyage;
+                    if (const char* m = std::getenv("HELMSMAN_MISSION")) {
+                        voyage.mission = std::atoi(m);
+                    }
+                    bridge::Bridge b(session, voyage);
                     if (const char* ships = std::getenv("HELMSMAN_SHIPS")) {
                         // For trying space out: ships to meet, "KLINGON,ORION".
                         std::string list = ships;
@@ -219,7 +227,7 @@ int main(int argc, char** argv) {
                         }
                     }
                     const auto result = b.run();
-                    std::printf("bridge ended%s\n", result.quit ? ": quit" : "");
+                    std::printf("bridge ended: %d\n", static_cast<int>(result.leave));
                 } else {
                     const auto result = away::playAway(session, argv[3], std::stoi(argv[4]), std::stoi(argv[5]));
                     std::printf("mission ended: score %d, %d %d%s\n", result.score, result.a, result.b, result.quit ? ", quit" : "");
