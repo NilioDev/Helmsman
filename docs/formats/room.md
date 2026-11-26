@@ -84,14 +84,15 @@ Some offsets:
 |--------|---------|
 | 0x00 | eight 16-bit timers, counted down each tick |
 | 0x10, 0x12 | the mouse's x and y |
+| 0x14 | four 16-bit counts, one for each of the crew: how long they stay down when knocked down |
 | 0x1C | the crew cannot walk |
 | 0x1D | the crew is coming in |
 | 0x1E | the security officer is dead |
 | 0x1F | the action chosen |
 | 0x20, 0x21 | the thing used, and the thing it is used on |
 | 0x23 | not handled |
-| 0x24 | flags; ways out work only while this is 0 |
-| 0x25 | the four crew members' facings |
+| 0x24 | the crew knocked down, one bit each (Kirk 1, Spock 2, McCoy 4, security 8); ways out work only while this is 0. Each tick, a knocked-down member's count goes down by one; at 0 they get up (their `getu` animation, facing the way 0x25 says) and their bit is cleared |
+| 0x25 | the four crew members' facings (0 to 3 for n, s, e, w; 0xFF: as they stand) |
 | 0x29 | the turbolift's picture was shown (last mission) |
 
 The rest belongs to the missions' own code.
