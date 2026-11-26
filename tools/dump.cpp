@@ -28,6 +28,7 @@
 #include "helmsman/engine/fiber.hpp"
 #include "helmsman/data/archive.hpp"
 #include "helmsman/data/movie.hpp"
+#include "helmsman/data/animation.hpp"
 #include "helmsman/data/reader.hpp"
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/gfx/palette.hpp"
@@ -158,6 +159,36 @@ int main(int argc, char** argv) {
                     sheet.blit(shots[i], 0, 0, movie.width(), movie.height(), movie.width() * static_cast<int>(i), 0);
                 }
                 writePng(argv[5], sheet, movie.palette());
+            }
+        } else if (what == "anim" && argc >= 5) {
+            // A painted animation's frames side by side: anim PATH FRAME,... OUT.png
+            auto data = source->read(argv[3]);
+            if (!data) {
+                std::fprintf(stderr, "no such file\n");
+                return 1;
+            }
+            Animation anim(std::move(*data));
+            std::vector<int> wanted;
+            std::stringstream list(argv[4]);
+            for (std::string item; std::getline(list, item, ',');) {
+                wanted.push_back(std::stoi(item));
+            }
+            Surface sheet(anim.width() * static_cast<int>(std::max<std::size_t>(wanted.size(), 1)), anim.height());
+            for (int f = 0; f < anim.frameCount(); ++f) {
+                anim.next();
+                const auto it = std::find(wanted.begin(), wanted.end(), f);
+                if (it == wanted.end()) {
+                    continue;
+                }
+                Surface shot(anim.width(), anim.height());
+                std::copy(anim.picture().begin(), anim.picture().end(), shot.data());
+                sheet.blit(shot, 0, 0, anim.width(), anim.height(),
+                           anim.width() * static_cast<int>(it - wanted.begin()), 0);
+            }
+            std::printf("%d frames of %dx%d at %d a second\n", anim.frameCount(), anim.width(), anim.height(),
+                        anim.framesPerSecond());
+            if (argc >= 6) {
+                writePng(argv[5], sheet, anim.palette());
             }
         } else if (what == "raw" && argc >= 5) {
             auto data = source->read(argv[3]);
