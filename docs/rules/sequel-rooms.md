@@ -147,3 +147,9 @@ answer N (counted from 0), and waits a little for a question that comes
 late. `wait` lets the room's clock run for 200 ticks, so its timers go off.
 `shot:N` keeps a picture of the room as `OUT/shot-N.png`. With `HELMSMAN_TRACE` it also prints every state and the values
 that tell it apart.
+
+`HELMSMAN_START="follow EPISODE MOST ORDERS"` starts the episode from the
+top instead: its space script sends the crew down, ORDERS play the away
+mission as above, and when the crew beams up the game goes on as a
+player's, so the input script (keys, clicks) can take it through the
+bridge, the admiral's rating and on.
