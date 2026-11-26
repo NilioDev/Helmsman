@@ -118,6 +118,12 @@ public:
 
     // A line for each actor, for checking.
     std::string describe() const;
+    // For tests and tools: the events this room's code answers, one of them
+    // as if it happened, and how things stand afterwards.
+    std::vector<Event> roomEvents() const;
+    void inject(const Event& e) { post(e.action, e.b1, e.b2, e.b3); }
+    bool ended() const { return result_.has_value(); }
+    int roomChangingTo() const { return pendingChange_ ? pendingChange_->room : -1; }
 
     static constexpr int kActors = 32;
 
@@ -216,6 +222,7 @@ private:
     void textDisplayMenu();
     MissionResult loop();
     void showPicture(const std::string& name);
+    void turbolift(int deck);
 
     void endMission(int a, int b, int c);
 

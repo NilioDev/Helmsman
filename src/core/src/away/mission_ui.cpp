@@ -10,6 +10,7 @@
 #include "helmsman/data/reader.hpp"
 
 #include <algorithm>
+#include <array>
 #include <ctime>
 #include <cstdio>
 
@@ -21,6 +22,7 @@ namespace st {
 constexpr int kNoWalking = 0x1C;
 constexpr int kCrewEntering = 0x1D;
 constexpr int kRedshirtDead = 0x1E;
+constexpr int kSeenTurbolift = 0x29; // the turbolift picture was shown
 constexpr int kAction = 0x1F;
 constexpr int kActiveObject = 0x20;
 constexpr int kPassiveObject = 0x21;
@@ -972,6 +974,114 @@ void Mission::textDisplayMenu() {
     const int choice = showText(shown, 0x14, 0x1E, 0xB0, false);
     if (choice >= 0 && choice < 3) {
         session_.textMode = kModes[(start + choice) % 3];
+    }
+}
+
+// The turbolift's map of the ship (the last mission): the player points at
+// a deck and the lift goes there. `deck` is 0 in the lift of the upper decks,
+// 1 in the lower one. The first time a picture of the lift is shown first.
+void Mission::turbolift(int deck) {
+    Platform& p = session_.platform;
+    std::shared_ptr<const Bitmap> map;
+    std::array<std::shared_ptr<const Bitmap>, 6> labels{};
+    try {
+        map = session_.assets.picture("veng9");
+        for (std::size_t i = 0; i < labels.size(); ++i) {
+            labels[i] = session_.assets.picture("turbo" + std::to_string(i + 1));
+        }
+    } catch (const FormatError&) {
+        return;
+    }
+    if (var(st::kSeenTurbolift) == 0) {
+        std::shared_ptr<const Bitmap> lift;
+        try {
+            lift = session_.assets.picture("veng9b");
+        } catch (const FormatError&) {
+        }
+        p.takeClicks();
+        p.keys.clear();
+        for (int t = 0; lift && t < 45 && !p.quit; ++t) {
+            lift->copyTo(p.screen, 0, 0);
+            session_.waitTick();
+            if (p.takeClicks() != 0) {
+                break;
+            }
+            bool done = false;
+            for (const KeyPress& k : p.keys) {
+                done = done || k.scancode == 0x01 || k.scancode == 0x1C || k.scancode == 0x39;
+            }
+            p.keys.clear();
+            if (done) {
+                break;
+            }
+        }
+        var(st::kSeenTurbolift) = 1;
+    }
+
+    // Each deck's name on the map, and where it leads (a room and the
+    // door the crew comes out of), or why it cannot be reached.
+    struct Place {
+        int left, top, right, bottom;
+        int onlyFrom; // the lift it can be reached from, or -1 for both
+        int room, door;
+    };
+    constexpr int kBlocked = -2;
+    const Place places[] = {
+        {0x7F, 0x78, 0x91, 0x7B, 0, 0, 1},
+        {0x6E, 0x83, 0x7E, 0x87, 0, 1, 1},
+        {0x95, 0x8F, 0xAD, 0x93, -1, 3, deck == 0 ? 1 : 0},
+        {0xEF, 0x98, 0xFD, 0xA0, 1, 5, 1},
+        {0x6B, 0xA3, 0x80, 0xA7, 1, 7, 1},
+        {0x6E, 0xAB, 0x88, 0xAF, -1, kBlocked, 0},
+    };
+    const auto under = [&]() -> int {
+        for (std::size_t i = 0; i < std::size(places); ++i) {
+            const Place& pl = places[i];
+            if (p.mouseX >= pl.left && p.mouseX <= pl.right && p.mouseY >= pl.top && p.mouseY <= pl.bottom) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    };
+    int shown = -1;
+    const auto draw = [&] {
+        map->copyTo(p.screen, 0, 0);
+        if (shown >= 0) {
+            labels[static_cast<std::size_t>(shown)]->draw(p.screen, 3, 0xA8);
+        }
+    };
+    Ui u{session_, scene_, draw};
+    p.takeClicks();
+    p.keys.clear();
+    while (!p.quit) {
+        // The pointer stays on the lower part of the screen, where the map is.
+        if (p.mouseY < 0x60) {
+            p.warpPointer = true;
+            p.warpX = p.mouseX;
+            p.warpY = 0x60;
+            p.mouseY = 0x60;
+        }
+        shown = under();
+        draw();
+        session_.waitTick();
+        bool chose = (p.takeClicks() & 1) != 0;
+        for (const KeyPress& k : p.keys) {
+            chose = chose || k.scancode == 0x1C || k.scancode == 0x3B;
+        }
+        p.keys.clear();
+        const int at = under();
+        if (!chose || at < 0) {
+            continue;
+        }
+        const Place& pl = places[static_cast<std::size_t>(at)];
+        if (pl.room == kBlocked) {
+            textBox(u, {"", "#GENE\\GENE_F14#Turbolift access is blocked by an extremely high radiation level."}, 0x32, 0x32, 0xB0);
+        } else if (pl.onlyFrom >= 0 && pl.onlyFrom != deck) {
+            textBox(u, {"", "#GENE\\GENE_F15#This Turbolift cannot reach that area of the ship."}, 0x32, 0x32, 0xB0);
+        } else {
+            pendingChange_ = RoomChange{pl.room, pl.door % 6};
+            return;
+        }
     }
 }
 

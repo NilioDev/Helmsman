@@ -734,6 +734,21 @@ bool Mission::runExact(const Event& e) {
     return false;
 }
 
+std::vector<Event> Mission::roomEvents() const {
+    std::vector<Event> out;
+    int guard = 0;
+    for (int p = rdf16(0x0E); p != 0 && p < rdf16(0x10) && guard < 4096; ++guard) {
+        out.push_back(Event{static_cast<std::uint8_t>(rdf16(p) & 0xFF), static_cast<std::uint8_t>(rdf16(p) >> 8),
+                            static_cast<std::uint8_t>(rdf16(p + 2) & 0xFF), static_cast<std::uint8_t>(rdf16(p + 2) >> 8)});
+        const int next = rdf16(p + 4);
+        if (next <= p) {
+            break;
+        }
+        p = next;
+    }
+    return out;
+}
+
 bool Mission::hasAction(const Event& e) const {
     const std::uint32_t want = e.action | (e.b1 << 8) | (e.b2 << 16) | (static_cast<std::uint32_t>(e.b3) << 24);
     int guard = 0;
@@ -1087,10 +1102,34 @@ std::uint32_t Mission::roomFunction(int fn, const std::array<std::uint16_t, 6>& 
         result_ = r;
         return 0;
     }
-    case 0x13:
+    case 0x13: { // the player types an answer; which of the room's answers it is
+        // The answers follow each other in at most 30 bytes, each ending in a
+        // NUL, and an empty one ends the list.
+        std::vector<std::string> answers;
+        int at = a[0];
+        while (at - a[0] < 30) {
+            const std::string one = rdfText(at, 30 - (at - a[0]));
+            if (one.empty()) {
+                break;
+            }
+            answers.push_back(lower(one));
+            at += static_cast<int>(one.size()) + 1;
+        }
+        Ui u = ui();
+        const auto typed = away::textInput(u, "Code:", 0xA0, 0x64, 20);
+        if (!typed) {
+            return 0;
+        }
+        const std::string said = lower(*typed);
+        for (std::size_t i = 0; i < answers.size(); ++i) {
+            if (answers[i] == said) {
+                return static_cast<int>(i) + 1;
+            }
+        }
         return 0;
-    case 0x14:
-        showPicture("veng9");
+    }
+    case 0x14: // the turbolift's map
+        turbolift(s(2));
         return 0;
     case 0x15: // a sound effect by name, over and over
         session_.playEffect(rdfText(a[0], 10), true);

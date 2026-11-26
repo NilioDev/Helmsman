@@ -144,6 +144,90 @@ int main(int argc, char** argv) {
             }
             writePng(argv[7], platform.screen, platform.palette);
             std::printf("%s", mission.describe().c_str());
+        } else if (what == "events" && argc >= 5) {
+            // Every event a room answers, each in a fresh copy of the room,
+            // run until things settle: for finding room code that fails.
+            int frames = 0;
+            // HELMSMAN_SHOT=FRAME:FILE saves the screen at that frame.
+            int shotAt = 0;
+            std::string shotPath;
+            if (const char* shot = std::getenv("HELMSMAN_SHOT")) {
+                const std::string v = shot;
+                const auto colon = v.find(':');
+                if (colon != std::string::npos) {
+                    shotAt = std::atoi(v.substr(0, colon).c_str());
+                    shotPath = v.substr(colon + 1);
+                }
+            }
+            Platform platform;
+            platform.onWait = [&frames, shotAt, &shotPath](Platform& p) {
+                p.millis += 16;
+                ++frames;
+                for (auto& q : p.soundQueued) {
+                    q = 0.0;
+                }
+                p.sound.clear();
+                // Press Enter now and then, and click all over the screen,
+                // so that boxes and maps that wait for the player go on.
+                if (frames % 25 == 0) {
+                    p.keys.push_back(KeyPress{scancode::kEnter, 0});
+                    const auto k = static_cast<unsigned>(frames / 25) * 2654435761u;
+                    p.mouseX = static_cast<int>((k >> 8) % 320);
+                    p.mouseY = static_cast<int>((k >> 20) % 200);
+                    p.mouseButtons = 1;
+                } else if (frames % 25 == 1) {
+                    p.mouseButtons = 0;
+                }
+                if (shotAt > 0 && frames == shotAt) {
+                    writePng(shotPath, p.screen, p.palette);
+                }
+                if (frames > 20000) {
+                    throw StopRequested{};
+                }
+            };
+            const int room = std::stoi(argv[4]);
+            std::vector<away::Event> list;
+            {
+                away::Session session(platform, *source);
+                away::Mission m(session, argv[3]);
+                m.loadRoom(room);
+                list = m.roomEvents();
+            }
+            int failed = 0;
+            for (const auto& e : list) {
+                if (argc >= 6) {
+                    char id[16];
+                    std::snprintf(id, sizeof id, "%02x%02x%02x%02x", e.action, e.b1, e.b2, e.b3);
+                    if (std::string(argv[5]) != id) {
+                        continue;
+                    }
+                }
+                frames = 0;
+                std::string outcome;
+                try {
+                    away::Session session(platform, *source);
+                    session.trace = std::getenv("HELMSMAN_TRACE") != nullptr;
+                    away::Mission m(session, argv[3]);
+                    m.loadRoom(room);
+                    m.spawnCrew(0);
+                    for (int i = 0; i < 60; ++i) {
+                        m.advance();
+                    }
+                    m.inject(e);
+                    for (int i = 0; i < 400 && !m.ended() && m.roomChangingTo() < 0; ++i) {
+                        m.advance();
+                    }
+                    outcome = m.ended() ? "ends the mission" : m.roomChangingTo() >= 0 ? "to room " + std::to_string(m.roomChangingTo()) : "ok";
+                } catch (const StopRequested&) {
+                    outcome = "STUCK";
+                    ++failed;
+                } catch (const std::exception& ex) {
+                    outcome = std::string("FAILED: ") + ex.what();
+                    ++failed;
+                }
+                std::printf("%s%d %02x %02x %02x %02x: %s\n", argv[3], room, e.action, e.b1, e.b2, e.b3, outcome.c_str());
+            }
+            std::printf("%zu events, %d failed\n", list.size(), failed);
         } else if (what == "play" && argc >= 8) {
             // Plays a mission with input from a script.
             std::multimap<int, Step> steps;
