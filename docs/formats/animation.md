@@ -13,14 +13,15 @@ All numbers are little-endian.
 | 0 | 4 | `LPF ` |
 | 4 | 2 | most pages the file may have (256) |
 | 6 | 2 | number of pages |
-| 8 | 4 | number of records: the frames plus one that leads from the last frame back to the first |
+| 8 | 4 | number of records |
 | 12 | 2 | most records in a page (256) |
 | 14 | 2 | where the page table starts (0x500) |
 | 16 | 4 | `ANIM` |
 | 20 | 2 | width |
 | 22 | 2 | height |
 | 29 | 1 | packing (1: the run, skip and copy codes below) |
-| 64 | 4 | number of frames |
+| 26 | 1 | 1 when the last record leads from the last frame back to the first |
+| 64 | 4 | number of frames (in the game's files the same as the number of records) |
 | 68 | 2 | frames per second |
 
 From 0x80 come colour cycles of 8 bytes each; in the game's files they
@@ -53,6 +54,9 @@ change the frame before (the first frame is drawn over black):
 | 0 | a count byte and a colour: that many pixels of the colour |
 | 0x81–0xFF | skip `c − 0x80` pixels |
 | 0x80 | a word `w` follows: 0 ends the record; below 0x8000 skips `w` pixels; with 0xC000 set, a colour follows and `w & 0x3FFF` pixels get it; else copy the next `w & 0x3FFF` bytes |
+
+The game shows the records as frames, except the last one when byte 26 is
+set: that record is drawn only to go round again.
 
 Pixels go left to right, top to bottom, through the whole picture. Helmsman
 refuses a record that would draw past the end.

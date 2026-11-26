@@ -17,7 +17,7 @@ void put16(std::vector<std::uint8_t>& to, std::size_t at, int v) {
 }
 
 // A 4x2 animation with the given records, all in one page.
-std::vector<std::uint8_t> build(const std::vector<std::vector<std::uint8_t>>& records) {
+std::vector<std::uint8_t> build(const std::vector<std::vector<std::uint8_t>>& records, bool loopRecord = false) {
     std::vector<std::uint8_t> f(0xB00, 0);
     std::memcpy(f.data(), "LPF ", 4);
     std::memcpy(f.data() + 16, "ANIM", 4);
@@ -27,6 +27,7 @@ std::vector<std::uint8_t> build(const std::vector<std::vector<std::uint8_t>>& re
     put16(f, 20, 4);
     put16(f, 22, 2);
     put16(f, 64, static_cast<int>(records.size()));
+    f[26] = loopRecord ? 1 : 0;
     put16(f, 68, 10);
     f[0x100 + 4 * 3 + 2] = 0xFC; // colour 3: red
     put16(f, 0x500, 0);
@@ -72,6 +73,16 @@ HLM_TEST("animation: runs, skips and copies over the frame before") {
     HLM_CHECK(anim.picture()[0] == 7 && anim.picture()[1] == 8);
     anim.next(); // round again
     HLM_CHECK(anim.frame() == 0 && anim.picture() == std::vector<std::uint8_t>(8, 3));
+}
+
+HLM_TEST("animation: a last record that leads back to the first frame") {
+    Animation anim(build({{0x00, 8, 3, 0x80, 0, 0}, {0x01, 4, 0x80, 0, 0}, {0x01, 3, 0x80, 0, 0}}, true));
+    HLM_CHECK(anim.frameCount() == 2);
+    anim.next();
+    anim.next();
+    HLM_CHECK(anim.frame() == 1 && anim.picture()[0] == 4);
+    anim.next();
+    HLM_CHECK(anim.frame() == 0 && anim.picture()[0] == 3 && anim.picture()[1] == 3);
 }
 
 HLM_TEST("animation: damaged files are refused") {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "helmsman/engine/play.hpp"
 
+#include "helmsman/sequel/scenes.hpp"
+
 #include "helmsman/away/mission.hpp"
 #include "helmsman/bridge/bridge.hpp"
 #include "helmsman/bridge/transporter.hpp"
@@ -123,7 +125,12 @@ void playGame(Platform& platform, GameSource& source) {
         playAnniversary(platform, source);
         return;
     }
-    const auto archive = Archive::open(source, "DATA");
+    sequel::Assets assets(source);
+    sequel::playScene(platform, assets, "TITLE");
+    if (platform.quit) {
+        return;
+    }
+    const auto& archive = assets.data();
     const char* picture = "TITLE";
     if (archive.has(std::string(picture) + ".BMP") && archive.has(std::string(picture) + ".PAL")) {
         platform.palette = Palette::fromBytes(archive.need(std::string(picture) + ".PAL"));

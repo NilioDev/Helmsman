@@ -677,6 +677,15 @@ int main(int argc, char** argv) {
                     }
                 }
             };
+            if (std::string(argv[3]) == "GAME" && source->game() != GameId::Anniversary) {
+                try {
+                    playGame(platform, *source);
+                    std::printf("game ended\n");
+                } catch (const StopRequested&) {
+                    std::printf("script ended at frame %d\n", frame);
+                }
+                return 0;
+            }
             away::Session session(platform, *source);
             session.trace = std::getenv("HELMSMAN_TRACE") != nullptr;
             try {

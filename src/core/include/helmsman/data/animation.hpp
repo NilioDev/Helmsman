@@ -25,7 +25,7 @@ public:
     const Palette& palette() const { return palette_; }
 
     // Draws the next frame (the first on the first call). After the last
-    // frame the film starts over. Throws FormatError on damaged data.
+    // frame the animation starts over. Throws FormatError on damaged data.
     void next();
     // The frame drawn last: width() * height() colour numbers.
     const std::vector<std::uint8_t>& picture() const { return picture_; }
@@ -48,6 +48,7 @@ private:
     int frames_ = 0;
     int records_ = 0;
     int fps_ = 0;
+    bool loopRecord_ = false;
     Palette palette_;
     std::vector<Page> pages_;
     std::vector<std::uint8_t> picture_;

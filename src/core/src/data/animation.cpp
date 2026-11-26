@@ -33,11 +33,15 @@ Animation::Animation(std::vector<std::uint8_t> file) : file_(std::move(file)) {
     r.seek(20);
     width_ = r.u16();
     height_ = r.u16();
-    r.seek(64);
-    frames_ = static_cast<int>(std::min<std::uint32_t>(r.u32(), 0xFFFF));
+    r.seek(26);
+    loopRecord_ = r.u8() != 0;
+    r.seek(68);
     fps_ = r.u16();
+    // The last record, when marked, leads from the last frame back to the
+    // first; it is not a frame of its own.
+    frames_ = records_ - (loopRecord_ ? 1 : 0);
     if (width_ <= 0 || height_ <= 0 || width_ > kMaxSide || height_ > kMaxSide || pageCount > kMaxPages ||
-        frames_ <= 0 || frames_ > records_) {
+        frames_ <= 0) {
         throw FormatError("animation header out of range");
     }
     // Colours are blue, green, red and a spare byte, 8 bits each.
@@ -93,11 +97,17 @@ std::span<const std::uint8_t> Animation::record(int index) const {
 }
 
 void Animation::next() {
-    frame_ = frame_ + 1 >= frames_ ? 0 : frame_ + 1;
-    if (frame_ == 0) {
+    if (frame_ < 0 || (frame_ + 1 >= frames_ && !loopRecord_)) {
+        frame_ = 0;
         std::fill(picture_.begin(), picture_.end(), 0);
+        draw(record(0));
+    } else if (frame_ + 1 >= frames_) {
+        frame_ = 0;
+        draw(record(frames_));
+    } else {
+        ++frame_;
+        draw(record(frame_));
     }
-    draw(record(frame_));
 }
 
 void Animation::draw(std::span<const std::uint8_t> data) {
