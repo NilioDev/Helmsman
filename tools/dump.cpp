@@ -18,6 +18,7 @@
 #include "helmsman/audio/adlib.hpp"
 #include "helmsman/away/mission.hpp"
 #include "helmsman/bridge/bridge.hpp"
+#include "helmsman/space/space.hpp"
 #include "helmsman/engine/fiber.hpp"
 #include "helmsman/data/archive.hpp"
 #include "helmsman/data/reader.hpp"
@@ -176,7 +177,18 @@ int main(int argc, char** argv) {
                         if (found != named.end()) {
                             p.keys.push_back(KeyPress{found->second, 0});
                         } else {
-                            p.keys.push_back(KeyPress{0, st.args[0][0]});
+                            // The PC keyboard's numbers for letters and digits.
+                            static const std::string rows[] = {"1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm,."};
+                            static const std::uint8_t starts[] = {0x02, 0x10, 0x1E, 0x2C};
+                            const char c = st.args[0][0];
+                            std::uint8_t code = c == '`' ? 0x29 : 0;
+                            for (int r = 0; r < 4; ++r) {
+                                const auto at = rows[r].find(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                                if (at != std::string::npos) {
+                                    code = static_cast<std::uint8_t>(starts[r] + at);
+                                }
+                            }
+                            p.keys.push_back(KeyPress{code, c});
                         }
                     } else if (st.what == "shot" && !st.args.empty()) {
                         writeShot(outFolder + "/" + st.args[0] + ".png", p);
@@ -190,6 +202,22 @@ int main(int argc, char** argv) {
             try {
                 if (std::string(argv[3]) == "BRIDGE") {
                     bridge::Bridge b(session);
+                    if (const char* ships = std::getenv("HELMSMAN_SHIPS")) {
+                        // For trying space out: ships to meet, "KLINGON,ORION".
+                        std::string list = ships;
+                        for (std::size_t at = 0; at <= list.size();) {
+                            const auto comma = list.find(',', at);
+                            const auto name = list.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+                            if (!name.empty()) {
+                                const int i = b.space().addShip(name);
+                                if (i >= 0) {
+                                    b.space().object(i).pos = space::Vec{(i - 2) * 400, 100, 1500};
+                                }
+                            }
+                            if (comma == std::string::npos) break;
+                            at = comma + 1;
+                        }
+                    }
                     const auto result = b.run();
                     std::printf("bridge ended%s\n", result.quit ? ": quit" : "");
                 } else {
@@ -227,6 +255,42 @@ int main(int argc, char** argv) {
             u32(bytes);
             out.write(reinterpret_cast<const char*>(pcm.data()), static_cast<std::streamsize>(bytes));
             std::printf("%d songs, song %d %s\n", music.songCount(), std::stoi(argv[4]), music.playing() ? "still playing" : "ended");
+        } else if (what == "space" && argc >= 6) {
+            // Flies the player's ship among others for a while:
+            //   space SHIP,SHIP,... TICKS OUT.png [ZOOM]
+            const auto archive = Archive::open(*source, "DATA");
+            space::Space sp(archive);
+            sp.setView(ClipRect{0, 0, 320, 200}, argc > 6 ? std::stoi(argv[6]) : 4);
+            sp.setPlayer("ENTERPRI");
+            sp.player().weaponsArmed = true;
+            std::string list = argv[3];
+            for (std::size_t at = 0; at < list.size();) {
+                const auto comma = list.find(',', at);
+                const auto name = list.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+                if (name.rfind("still:", 0) == 0) {
+                    sp.addStill(name.substr(6), space::Vec{0, 0, 1500});
+                } else if (!name.empty()) {
+                    const int i = sp.addShip(name);
+                    if (i >= 0) {
+                        sp.object(i).pos = sp.player().pos + space::Vec{(i - 2) * 300, 0, 1200};
+                    }
+                }
+                if (comma == std::string::npos) break;
+                at = comma + 1;
+            }
+            const int ticks = std::stoi(argv[4]);
+            Surface screen;
+            for (int t = 0; t < ticks; ++t) {
+                sp.tick();
+            }
+            sp.draw(screen);
+            writePng(argv[5], screen, Palette::fromBytes(archive.need("BRIDGE.PAL")));
+            for (int i = 0; i < space::Space::kObjects; ++i) {
+                const auto& o = sp.object(i);
+                if (o.kind == space::Kind::None) continue;
+                std::printf("%d kind %d type %d pos %d %d %d hull %d%s\n", i, static_cast<int>(o.kind), o.type, o.pos.x, o.pos.y,
+                            o.pos.z, o.cls.parts[0].now, o.destroyed ? " destroyed" : "");
+            }
         } else if (what == "check") {
             // Unpacks every file of an archive.
             const auto archive = Archive::open(*source, archiveArg(3));

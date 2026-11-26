@@ -452,6 +452,7 @@ std::uint8_t pcScancode(SDL_Scancode code) {
     case SDL_SCANCODE_8: return 0x09;
     case SDL_SCANCODE_9: return 0x0A;
     case SDL_SCANCODE_0: return 0x0B;
+    case SDL_SCANCODE_GRAVE: return 0x29;
     case SDL_SCANCODE_MINUS: return 0x0C;
     case SDL_SCANCODE_EQUALS: return 0x0D;
     case SDL_SCANCODE_BACKSPACE: return 0x0E;
@@ -635,8 +636,16 @@ SDL_AppResult SDL_AppEvent(void* state, SDL_Event* event) {
             }
         }
         p.keys.push_back(helmsman::KeyPress{pcScancode(key.scancode), text});
+        if (!key.repeat) {
+            p.heldKey = pcScancode(key.scancode);
+        }
         return SDL_APP_CONTINUE;
     }
+    case SDL_EVENT_KEY_UP:
+        if (pcScancode(event->key.scancode) == p.heldKey) {
+            p.heldKey = 0;
+        }
+        return SDL_APP_CONTINUE;
     case SDL_EVENT_GAMEPAD_ADDED:
         SDL_OpenGamepad(event->gdevice.which);
         return SDL_APP_CONTINUE;

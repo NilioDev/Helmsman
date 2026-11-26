@@ -9,6 +9,7 @@
 #include "helmsman/away/scene.hpp"
 #include "helmsman/away/session.hpp"
 #include "helmsman/away/ui.hpp"
+#include "helmsman/space/space.hpp"
 
 #include <array>
 #include <cstdint>
@@ -68,6 +69,10 @@ public:
     // For tools: one tick without the player.
     void advance();
 
+    space::Space& space() { return space_; }
+    // True while the ship is in orbit around a planet (and does not fly).
+    bool inOrbit = false;
+
     // An officer says something in a text box.
     int say(int officer, const std::string& text);
     // The speaker's name and colour of an officer.
@@ -95,6 +100,13 @@ private:
     void setControl(bool on);
     void clampPointer();
     void doAction(int action);
+    void steer();
+    void drawHud();
+    void drawShipPanels(const space::Object& ship);
+    void drawRadar();
+    void panelPicture(const std::string& name, bool opaque, int recolour = -1);
+    void setZoom(int zoom);
+    void report(int event, int what, bool player);
     void defaultAction(int action);
     away::Ui ui();
 
@@ -106,9 +118,13 @@ private:
     int lightStep_ = 0;
     std::uint64_t ticks_ = 0;
     bool control_ = false; // the pointer steers the ship in the viewscreen
-    bool shieldsUp_ = false;
-    bool weaponsArmed_ = false;
     bool targetAnalysis_ = false;
+    bool fullView_ = false; // the viewscreen fills the whole screen
+    int zoom_ = 4;
+    space::Space space_;
+    away::Sprite radar_;
+    std::shared_ptr<Bitmap> radarBitmap_;
+    std::shared_ptr<const Bitmap> weaponLights_;
     std::deque<int> actions_;
     std::optional<BridgeResult> result_;
 };

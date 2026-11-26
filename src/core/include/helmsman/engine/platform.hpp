@@ -64,6 +64,7 @@ struct Platform {
     int mouseY = 0;
     std::uint8_t mouseButtons = 0; // bit 0 left, bit 1 right
     std::deque<KeyPress> keys;
+    std::uint8_t heldKey = 0; // the key held down now (its scancode), or 0
     double soundQueued[static_cast<int>(SoundChannel::Count)] = {}; // seconds still to play
     bool padInUse = false; // the gamepad moves the pointer now
 
