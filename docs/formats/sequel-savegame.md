@@ -23,8 +23,12 @@ that offset of the original program's data segment.
    `DS:C00A`, 0x0A; `DS:2634`, 2; the episode number `DS:2636`, 2;
    `DS:6032`, 0x10; `DS:2658`, 2; `DS:2630`, 2. When `DS:2630` is not 0:
    `DS:5EC0`, 0x12A and `DS:5FEA`, 2.
-7. When the state is 2 (on a mission): the room (`DS:B434`, 0x10 and more,
-   still to be listed).
+7. When the state is 2 (on a mission), the room: its name `DS:B434`, 0x10;
+   its number `DS:B416`, 2 (the room is loaded from these); `DS:B3DE`, 4;
+   the names of the room picture `DS:513A`, the depth map `DS:5144` and the
+   walking map `DS:514E`, 0x0A each; `DS:51C0`, `DS:51C2`, `DS:51C4`, 2 each;
+   `DS:51C6`, 0x9B; the handler stack `DS:526A`, 0x2A, and its count
+   `DS:5294`, 2; `DS:145E`, 2.
 8. `DS:851A`, 4 again.
 9. When the state is not −1: the 32 people and things of the scene,
    `DS:73D8`, 0x1140 (0x8A each; the first eight are the crew).

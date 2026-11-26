@@ -68,7 +68,7 @@ std::vector<MenuButton> Game::menu(std::string_view name) {
     return out;
 }
 
-void Game::startEpisode() {
+void Game::startEpisode(bool fresh) {
     episodeName_ = m_.text(ds::kEpisodeName, 16);
     const std::string base = upperName(episodeName_);
     episode_.emplace(Archive::open(assets_.source(), base));
@@ -80,7 +80,9 @@ void Game::startEpisode() {
     pictures_.clear();
     anims_.clear();
     m_.loadSpaceScript(episode_->need(base + "S.RDF"));
-    resetCrew();
+    if (fresh) {
+        resetCrew();
+    }
 }
 
 // What every episode starts from: the scripts' block empty, the usual
@@ -362,14 +364,19 @@ int Game::chooseFromMenu(int who) {
     }
     const int mx = m_.s16(static_cast<std::uint16_t>(at + 10));
     const int my = m_.s16(static_cast<std::uint16_t>(at + 12));
-    const auto buttons = menu(name);
+    return chooseButtons(menu(name), mx, my);
+}
+
+// Shows buttons over the scene at (mx, my) and waits for a click: the
+// button's number, or -1 when the player backs out.
+int Game::chooseButtons(const std::vector<MenuButton>& buttons, int mx, int my) {
     if (buttons.empty()) {
         return -1;
     }
     p_.takeClicks();
     p_.keys.clear();
     while (!p_.quit) {
-        drawBridge();
+        drawScene();
         p_.pointerTargets.clear();
         int hover = -1;
         for (std::size_t i = 0; i < buttons.size(); ++i) {
@@ -462,7 +469,14 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
         set = m_.cpu.read8(seg, static_cast<std::uint16_t>(who + 4));
         name = m_.scriptText(seg, static_cast<std::uint16_t>(who + 6), 24);
     }
-    const bool choice = texts.size() > 1;
+    const bool menu = menuTitle_ != nullptr;
+    if (menu) {
+        name = *menuTitle_;
+        set = 0;
+        bx = 0x14;
+        by = 0x14;
+    }
+    const bool choice = texts.size() > 1 || menu;
     constexpr std::size_t kColumns = 30;
     constexpr int kRowsPerPage = 8;
 
@@ -556,8 +570,11 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
 
         const auto clicks = p_.takeClicks();
         bool next = (clicks & 1) != 0;
+        bool back = menu && (clicks & 2) != 0;
         for (const auto& k : p_.keys) {
-            if (k.scancode == scancode::kEnter || k.scancode == scancode::kSpace || k.scancode == scancode::kEscape) {
+            if (menu && k.scancode == scancode::kEscape) {
+                back = true;
+            } else if (k.scancode == scancode::kEnter || k.scancode == scancode::kSpace || k.scancode == scancode::kEscape) {
                 next = true;
                 if (choice && hover < 0) {
                     hover = keyChoice;
@@ -572,6 +589,10 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
             }
         }
         p_.keys.clear();
+        if (back) {
+            picked = -1;
+            break;
+        }
         if (!next) {
             continue;
         }
@@ -597,7 +618,19 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
         speaking_ = false;
     }
     p_.pointerTargets.clear();
-    return std::max(0, picked);
+    return menu ? picked : std::max(0, picked);
+}
+
+int Game::menuBox(const std::string& title, const std::vector<std::string>& choices) {
+    if (choices.empty()) {
+        return -1;
+    }
+    menuTitle_ = &title;
+    struct Reset {
+        const std::string*& t;
+        ~Reset() { t = nullptr; }
+    } reset{menuTitle_};
+    return say(-1, choices, 0);
 }
 
 // A line or a choice as the scripts lay it out: who says it, then the
@@ -717,9 +750,21 @@ Machine::Flow Game::spaceCommand(ScriptCall& c, std::uint32_t& result) {
         waitTicks(c.sarg(0));
         return Machine::Flow::Go;
     case cmd::kCheckpoint:
+        // The game is saved here (the script goes on from the next step
+        // after a tick); a lost mission comes back to it.
         m_.set16(place::kPauseTicks, 1);
+        writeCheckpoint(m_.scriptText(seg, c.arg(0), 10));
         return Machine::Flow::Yield;
+    case cmd::kBackToCheckpoint: {
+        const std::string name = m_.scriptText(seg, c.arg(0), 10);
+        if (auto data = readCheckpoint(name)) {
+            throw RestoreGame{std::move(*data), c.sarg(1)};
+        }
+        return Machine::Flow::Go;
+    }
     case cmd::kRestored:
+        // What the checkpoint was come back to with (0 when just saved).
+        result = m_.u16(kRestoreCode);
         return Machine::Flow::Go;
     case cmd::kSpeakerAnim: {
         const int who = c.sarg(0);
@@ -759,6 +804,10 @@ bool Game::handle(int offset) {
 }
 
 void Game::bridgeButton(int id) {
+    if (id == button::kKirkOptions) {
+        optionsMenu();
+        return;
+    }
     const bool paused = m_.u16(place::kPauseTicks) != 0;
     if (paused) {
         // The crew's main buttons go on with a paused script at once.
@@ -868,6 +917,15 @@ void Game::bridge() {
             }
         }
         present();
+        bool options = false;
+        for (const auto& k : p_.keys) {
+            options = options || k.scancode == scancode::kEscape || k.text == 'o' || k.text == 'O';
+        }
+        p_.keys.clear();
+        if (options) {
+            optionsMenu();
+            continue;
+        }
         if ((p_.takeClicks() & 1) != 0) {
             const int who = crewAt(p_.mouseX, p_.mouseY);
             if (who >= 0) {
@@ -881,7 +939,7 @@ void Game::bridge() {
     }
 }
 
-void Game::run() {
+void Game::newGame() {
     const auto fresh = assets_.source().read("SAVEGAME.NEW");
     if (!fresh) {
         throw FormatError("SAVEGAME.NEW is missing");
@@ -889,34 +947,67 @@ void Game::run() {
     m_.loadSaved(*fresh);
     // A new game starts on the bridge with the first episode.
     m_.set16(ds::kState, 1);
-    if (!p_.devStart.empty()) {
-        // For the tools: straight to an away mission.
-        std::istringstream in(p_.devStart);
-        std::string ep;
-        int room = 0;
-        int spawn = -1;
-        in >> ep >> room >> spawn;
-        static const char* const kNames[] = {"fed", "sentnl", "noman", "light", "voids", "scotty", "madness", "meth"};
-        for (int i = 0; i < 8; ++i) {
-            if (ep == kNames[i]) {
-                m_.set16(ds::kEpisode, static_cast<std::uint16_t>(i));
-                m_.setText(ds::kEpisodeName, ep, 0x10);
-            }
-        }
-        startEpisode();
-        m_.set16(ds::kRoom, static_cast<std::uint16_t>(room));
-        m_.set16(ds::kSpawn, static_cast<std::uint16_t>(spawn));
-        // The usual landing party.
-        for (int i = 0; i < 3; ++i) {
-            const auto r = static_cast<std::uint16_t>(ds::kActors + i * ds::kActorSize);
-            m_.set8(static_cast<std::uint16_t>(r + actor::kTeam), 0xBD);
-            m_.set8(r, static_cast<std::uint8_t>(m_.u8(r) | 8));
-        }
-        awayMission();
-        return;
-    }
+    startEpisode();
+}
+
+void Game::run() {
+    std::optional<RestoreGame> pending;
     while (!p_.quit) {
-        startEpisode();
+        try {
+            if (pending) {
+                restorePayload(pending->payload);
+                if (pending->code >= 0) {
+                    m_.set16(kRestoreCode, static_cast<std::uint16_t>(pending->code));
+                }
+                pending.reset();
+            } else {
+                newGame();
+                if (!p_.devStart.empty()) {
+                    devAwayMission();
+                    return;
+                }
+            }
+            episodes();
+            return;
+        } catch (RestoreGame& r) {
+            pending = std::move(r);
+        } catch (const RestartGame&) {
+            pending.reset();
+        }
+        away_ = false;
+        awayPending_ = false;
+    }
+}
+
+// For the tools: straight to an away mission ("episode room spawn").
+void Game::devAwayMission() {
+    std::istringstream in(p_.devStart);
+    std::string ep;
+    int room = 0;
+    int spawn = -1;
+    in >> ep >> room >> spawn;
+    static const char* const kNames[] = {"fed", "sentnl", "noman", "light", "voids", "scotty", "madness", "meth"};
+    for (int i = 0; i < 8; ++i) {
+        if (ep == kNames[i]) {
+            m_.set16(ds::kEpisode, static_cast<std::uint16_t>(i));
+            m_.setText(ds::kEpisodeName, ep, 0x10);
+        }
+    }
+    startEpisode();
+    m_.set16(ds::kRoom, static_cast<std::uint16_t>(room));
+    m_.set16(ds::kSpawn, static_cast<std::uint16_t>(spawn));
+    // The usual landing party.
+    for (int i = 0; i < 3; ++i) {
+        const auto r = static_cast<std::uint16_t>(ds::kActors + i * ds::kActorSize);
+        m_.set8(static_cast<std::uint16_t>(r + actor::kTeam), 0xBD);
+        m_.set8(r, static_cast<std::uint8_t>(m_.u8(r) | 8));
+    }
+    awayMission();
+}
+
+// The episodes one after another, from the one the game is at.
+void Game::episodes() {
+    while (!p_.quit) {
         bridge();
         if (p_.quit) {
             break;
@@ -931,6 +1022,7 @@ void Game::run() {
         m_.setText(ds::kEpisodeName, kEpisodes[next], 0x10);
         m_.set16(ds::kResume, 0);
         m_.set16(place::kPauseTicks, 0);
+        startEpisode();
     }
 }
 

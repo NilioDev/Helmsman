@@ -202,6 +202,7 @@ std::vector<Polygon> Game::polygons(std::uint16_t from, std::uint16_t to) const 
 // --- Walking -------------------------------------------------------------
 
 void Game::loadWalkMap(const std::string& name) {
+    walkMapName_ = name;
     walkMap_.clear();
     nodes_.clear();
     nextHop_.assign(32 * 32, 0);
@@ -922,52 +923,37 @@ void Game::dispatchQueued() {
 
 // --- Rooms -----------------------------------------------------------------
 
-void Game::loadRoom(int number, bool first) {
+void Game::loadRoom(int number, bool first, bool restoring) {
     const std::string mission = m_.text(ds::kEpisodeName, 16);
     const std::string name = mission + std::to_string(number);
     roomNumber_ = number;
     fadeTarget_ = 100; // a dark room comes back
     panel_.clear();
-    // The room's picture, depths and palette.
-    const auto bgd = file(name + ".BGD");
-    if (!bgd || bgd->size() < 768 + 64000) {
-        throw FormatError("room picture " + name + " is missing");
-    }
-    // The colours: the common palette (the people), with the room's own
-    // in the places rooms may use.
-    std::vector<std::uint8_t> colours(768, 0);
-    if (const auto common = file("PALETTE.PAL"); common && common->size() >= 768) {
-        std::copy_n(common->begin(), 768, colours.begin());
-    }
-    std::fill_n(colours.begin(), 0x1E, 0);
-    for (const auto& [from, to] : {std::pair{0x1E, 0x180}, std::pair{0x270, 0x294}, std::pair{0x2A0, 0x2E2}}) {
-        std::copy(bgd->begin() + from, bgd->begin() + to, colours.begin() + from);
-    }
-    roomPalette_ = Palette::fromBytes(colours);
-    scene_.backdrop = Surface(320, 200);
-    std::copy_n(bgd->begin() + 768, 64000, scene_.backdrop.data());
-    if (const auto pri = file(name + ".PRI")) {
-        scene_.setDepths(*pri);
-    } else {
-        std::fill(scene_.depths.begin(), scene_.depths.end(), 0);
-    }
+    loadBackdrop(name);
+    loadDepths(name);
     shade_ = shadeTable(roomPalette_, 45);
     scaled_.clear();
 
     if (first) {
         // The code of every mission (DATA.RDF), then this mission's.
-        m_.set16(spot::kHandlerCount, 0);
+        if (!restoring) {
+            m_.set16(spot::kHandlerCount, 0);
+        }
         const auto data = file("DATA.RDF");
         if (!data) {
             throw FormatError("DATA.RDF is missing");
         }
         m_.loadRoomCode(Machine::kGlobal, *data, false);
-        pushHandlers(2, m_.word(Machine::kGlobal, mission::kLists), 0x7FFF);
+        if (!restoring) {
+            pushHandlers(2, m_.word(Machine::kGlobal, mission::kLists), 0x7FFF);
+        }
         const auto code = file(mission + ".RDF");
         if (!code) {
             throw FormatError("the mission's code is missing");
         }
         m_.loadRoomCode(Machine::kShared, *code, false);
+    }
+    if (first && !restoring) {
         pushHandlers(1, m_.word(Machine::kShared, mission::kLists), 1000);
         // The names of the things the mission brings, after DATA.RDF's.
         int item = 0x46;
@@ -995,8 +981,10 @@ void Game::loadRoom(int number, bool first) {
         throw FormatError("the room's code is missing: " + name);
     }
     m_.loadRoomCode(Machine::kRoom, *code, true);
-    popHandlers(0, -1); // the last room's, gone with its code
-    pushHandlers(0, m_.word(Machine::kRoom, room::kLists), 0);
+    if (!restoring) {
+        popHandlers(0, -1); // the last room's, gone with its code
+        pushHandlers(0, m_.word(Machine::kRoom, room::kLists), 0);
+    }
     loadWalkMap(name);
 
     for (auto& b : bodies_) {
@@ -1004,6 +992,10 @@ void Game::loadRoom(int number, bool first) {
     }
     for (auto& beam : beams_) {
         beam = Beam{};
+    }
+    queue_.clear();
+    if (restoring) {
+        return;
     }
     for (int i = 0; i < 32; ++i) {
         const auto r = record(i);
@@ -1013,7 +1005,6 @@ void Game::loadRoom(int number, bool first) {
         }
         m_.set8(r, f);
     }
-    queue_.clear();
     roomTicks_ = 0;
     area_ = -1;
     exitArmed_ = -1;
@@ -1028,6 +1019,36 @@ void Game::loadRoom(int number, bool first) {
         if (m_.s16(at) > 0) {
             m_.set16(at, 0);
         }
+    }
+}
+
+void Game::loadBackdrop(const std::string& name) {
+    const auto bgd = file(name + ".BGD");
+    if (!bgd || bgd->size() < 768 + 64000) {
+        throw FormatError("room picture " + name + " is missing");
+    }
+    backdropName_ = name;
+    // The colours: the common palette (the people), with the room's own
+    // in the places rooms may use.
+    std::vector<std::uint8_t> colours(768, 0);
+    if (const auto common = file("PALETTE.PAL"); common && common->size() >= 768) {
+        std::copy_n(common->begin(), 768, colours.begin());
+    }
+    std::fill_n(colours.begin(), 0x1E, 0);
+    for (const auto& [from, to] : {std::pair{0x1E, 0x180}, std::pair{0x270, 0x294}, std::pair{0x2A0, 0x2E2}}) {
+        std::copy(bgd->begin() + from, bgd->begin() + to, colours.begin() + from);
+    }
+    roomPalette_ = Palette::fromBytes(colours);
+    scene_.backdrop = Surface(320, 200);
+    std::copy_n(bgd->begin() + 768, 64000, scene_.backdrop.data());
+}
+
+void Game::loadDepths(const std::string& name) {
+    depthsName_ = name;
+    if (const auto pri = file(name + ".PRI")) {
+        scene_.setDepths(*pri);
+    } else {
+        std::fill(scene_.depths.begin(), scene_.depths.end(), 0);
     }
 }
 
@@ -1106,6 +1127,9 @@ void Game::drawAway() {
 }
 
 void Game::playEffect(const std::string& name) {
+    if (!soundOn_) {
+        return;
+    }
     const std::string tag = upperName(name);
     std::optional<PlainSound> sound;
     if (voices_ && voices_->has(tag)) {
@@ -1318,11 +1342,14 @@ void Game::awayInput() {
     }
     bool menu = (clicks & 2) != 0;
     bool inv = false;
+    bool options = false;
     for (const auto& k : p_.keys) {
         if (k.scancode == scancode::kSpace || k.text == 'a' || k.text == 'A') {
             menu = true;
         } else if (k.text == 'i' || k.text == 'I') {
             inv = true;
+        } else if (k.text == 'o' || k.text == 'O' || k.scancode == scancode::kEscape) {
+            options = true;
         } else if (k.text == 'w' || k.text == 'W') {
             action_ = 1;
             subject_ = -1;
@@ -1341,11 +1368,15 @@ void Game::awayInput() {
     if (busy_) {
         return;
     }
+    if (options) {
+        optionsMenu();
+        return;
+    }
     if (menu) {
         const int a = actionMenu();
         if (a == kOptions) {
-            inv = true;
-            action_ = 4;
+            optionsMenu();
+            return;
         } else if (a > 0) {
             action_ = a;
             subject_ = -1;
@@ -1430,11 +1461,20 @@ void Game::awayMission() {
             g.cursorName_.clear();
         }
     } back{*this};
+    // A saved game made on this mission goes on where it was.
+    std::optional<std::vector<std::uint8_t>> resume = std::move(resumeAway_);
+    resumeAway_.reset();
     while (!p_.quit) {
         try {
-            loadRoom(number, first);
+            if (resume) {
+                SaveReader r(*resume);
+                readAway(r);
+                resume.reset();
+            } else {
+                loadRoom(number, first);
+                enterRoom(spawn);
+            }
             first = false;
-            enterRoom(spawn);
             while (!p_.quit) {
                 if (ticksDue_ > 0) {
                     // Ticks missed while a script waited are not made up.

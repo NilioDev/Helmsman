@@ -229,6 +229,9 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         m_.set16(kResultA, c.arg(0));
         m_.set16(kResultB, c.arg(1));
         throw LeaveMission{1};
+    case 0x14: // the mission is lost: load, start over or quit
+        gameOverMenu();
+        return 0;
     case 0x15: { // a typed answer, against a list of words
         askText();
         std::uint16_t at = c.arg(0);
@@ -451,13 +454,12 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         const std::string name = roomText(c.arg(0), 9);
         if (const auto bgd = file(name + ".BGD"); bgd && bgd->size() >= 768 + 64000) {
             std::copy_n(bgd->begin() + 768, 64000, scene_.backdrop.data());
+            backdropName_ = name;
         }
         return 0;
     }
     case 0x32: { // new depths
-        if (const auto pri = file(roomText(c.arg(0), 9) + ".PRI")) {
-            scene_.setDepths(*pri);
-        }
+        loadDepths(roomText(c.arg(0), 9));
         return 0;
     }
     case 0x33: // show the new picture now
@@ -474,6 +476,15 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         fadeColour_ = Colour{static_cast<std::uint8_t>(c.arg(0) & 0x3F), static_cast<std::uint8_t>(c.arg(1) & 0x3F),
                              static_cast<std::uint8_t>(c.arg(2) & 0x3F)};
         return 0;
+    case 0x38: { // back to an episode's checkpoint: name, the code the script gets
+        const std::string name = roomText(c.arg(0), 10);
+        if (auto data = readCheckpoint(name)) {
+            throw RestoreGame{std::move(*data), c.sarg(1)};
+        }
+        std::fprintf(stderr, "the checkpoint %s is missing\n", name.c_str());
+        gameOverMenu();
+        return 0;
+    }
     case 0x39: // who speaks, with which animation
         talker_ = who(0);
         talkingAnim_ = c.arg(1) != 0 ? roomText(c.arg(1), 9) : std::string{};

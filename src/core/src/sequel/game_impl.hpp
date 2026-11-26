@@ -10,6 +10,7 @@
 #include "helmsman/data/reader.hpp"
 #include "helmsman/data/sound_bank.hpp"
 #include "helmsman/engine/pad_buttons.hpp"
+#include "helmsman/engine/savegame.hpp"
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/sequel/machine.hpp"
 #include "helmsman/sequel/text.hpp"
@@ -55,6 +56,7 @@ constexpr std::uint16_t kMenuTable = 0x025E;
 constexpr std::uint16_t kMenuEntry = 14;
 // The text colour sets.
 constexpr std::uint16_t kTextColours = 0x22FE;
+constexpr std::uint16_t kRestoreCode = 0x4FF8; // what a restored checkpoint tells the script
 
 // Places in a person's record (0x8A bytes).
 namespace actor {
@@ -75,6 +77,7 @@ constexpr int kChoiceSpeaker = -2;
 // The bridge's own events (the button numbers of the crew's menus).
 namespace button {
 constexpr int kKirkBeam = 0x11;
+constexpr int kKirkOptions = 0x12;
 constexpr int kSpockReport = 0x20;
 constexpr int kUhuraHail = 0x40;
 constexpr int kSuluOrbit = 0x51;
@@ -115,6 +118,7 @@ constexpr int kCrewFlags = 0x28;
 constexpr int kScene = 0x2D;
 constexpr int kWait = 0x30;
 constexpr int kCheckpoint = 0x33;
+constexpr int kBackToCheckpoint = 0x34;
 constexpr int kRestored = 0x35;
 constexpr int kSpeakerAnim = 0x38;
 constexpr int kOpenBank = 0x39;
@@ -212,6 +216,13 @@ struct ChangeRoom {
     int spawn;
 };
 
+// Back to a saved game (a checkpoint's restore code, or -1), or a new one.
+struct RestoreGame {
+    std::vector<std::uint8_t> payload;
+    int code = -1;
+};
+struct RestartGame {};
+
 struct MenuButton {
     std::string picture;
     int x = 0;
@@ -250,7 +261,8 @@ private:
     std::vector<MenuButton> menu(std::string_view name);
 
     // Episodes.
-    void startEpisode();
+    // `fresh`: the crew starts the episode anew (not so for a saved game).
+    void startEpisode(bool fresh = true);
     void resetCrew();
 
     // The bridge.
@@ -278,12 +290,45 @@ private:
 
     // Lines and choices.
     int say(int who, const std::vector<std::string>& texts, std::uint16_t seg);
+    // A menu of the game's own: a title and choices; -1 when the player
+    // backs out (Escape, the right button).
+    int menuBox(const std::string& title, const std::vector<std::string>& choices);
+    // Set by menuBox for the length of one say().
+    const std::string* menuTitle_ = nullptr;
     void sayLine(const Line& line) { say(line.who, {line.text}, 0); }
     void playVoice(const std::string& tag);
 
     // Away missions (away.cpp).
     void awayMission();
-    void loadRoom(int room, bool first);
+    // `restoring`: for a saved game, whose data segment already holds what
+    // a room's entry would set.
+    void loadRoom(int room, bool first, bool restoring = false);
+    void loadBackdrop(const std::string& name);
+    void loadDepths(const std::string& name);
+    // Saved games (saves.cpp).
+    std::vector<std::uint8_t> savePayload();
+    void writeAway(SaveWriter& w) const;
+    void readAway(SaveReader& r);
+    void restorePayload(std::span<const std::uint8_t> payload);
+    void saveMenu();
+    bool loadMenu();
+    void writeCheckpoint(const std::string& name);
+    void newGame();
+    void devAwayMission();
+    void episodes();
+    std::optional<std::vector<std::uint8_t>> readCheckpoint(const std::string& name);
+    int chooseButtons(const std::vector<MenuButton>& buttons, int x, int y);
+    bool soundOn_ = true;
+    bool musicOn_ = true;
+    bool optionsMenu();
+    void gameOverMenu();
+    // The names of what the room shows now (a room may change them).
+    std::string backdropName_;
+    std::string depthsName_;
+    std::string walkMapName_;
+    // A saved game to go on from, read and waiting for the bridge loop or
+    // an away mission to pick it up.
+    std::optional<std::vector<std::uint8_t>> resumeAway_;
     void enterRoom(int spawn);
     void awayTick();
     void awayFrame(); // one frame while the scripts wait: animate, draw

@@ -170,8 +170,14 @@ void Machine::runSpace(std::uint16_t offset, const Host& host) {
             m.stopRequested = true;
         }
     };
+    struct Clear {
+        X86& c;
+        ~Clear() {
+            c.host = nullptr;
+            c.stopRequested = false;
+        }
+    } clear{c};
     c.run(kSpace, offset);
-    c.host = nullptr;
 }
 
 void Machine::loadRoomCode(std::uint16_t seg, std::span<const std::uint8_t> file, bool room) {

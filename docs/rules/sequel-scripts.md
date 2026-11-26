@@ -79,6 +79,9 @@ The space script's commands are numbered 0 to 0x3A. Those known so far:
 | 0x1A | the episode is over |
 | 0x1B `lo, hi` | a random number from `lo` to `hi` |
 | 0x1C `song, a, b` | music |
+| 0x33 `name` | checkpoint: the game is saved as `name` (the original writes `NAME.SAV`), with `DS:4FF8` set to 0 first; the script goes on at the next step, as after a Pause of 1 |
+| 0x34 `name, code` | back to the checkpoint `name`; `DS:4FF8` is then `code` |
+| 0x35 | `DS:4FF8`: 0 after a checkpoint is just made, the code it was come back to with otherwise (the script replays the episode's start when not 0) |
 | 0x38 `who, text` | a text box with a spoken line |
 | 0x39 `name` | open a sound bank |
 | 0x3A | close the sound banks |
