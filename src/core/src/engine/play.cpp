@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "helmsman/engine/play.hpp"
 
+#include "helmsman/sequel/game.hpp"
 #include "helmsman/sequel/scenes.hpp"
 
 #include "helmsman/away/mission.hpp"
@@ -130,17 +131,7 @@ void playGame(Platform& platform, GameSource& source) {
     if (platform.quit) {
         return;
     }
-    const auto& archive = assets.data();
-    const char* picture = "TITLE";
-    if (archive.has(std::string(picture) + ".BMP") && archive.has(std::string(picture) + ".PAL")) {
-        platform.palette = Palette::fromBytes(archive.need(std::string(picture) + ".PAL"));
-        Bitmap::fromBytes(archive.need(std::string(picture) + ".BMP")).copyTo(platform.screen, 0, 0);
-    }
-    platform.pointerTargets.clear();
-    platform.takeSkip();
-    while (!platform.takeSkip()) {
-        platform.waitFrame();
-    }
+    sequel::playGame(platform, assets);
 }
 
 } // namespace helmsman

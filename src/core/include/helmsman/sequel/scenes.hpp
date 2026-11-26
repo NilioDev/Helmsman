@@ -58,7 +58,8 @@ struct SceneStep {
 // Reads a scene script. Throws FormatError.
 std::vector<SceneStep> readSceneScript(std::span<const std::uint8_t> bytes);
 
-// Plays a scene script such as "TITLE". A key or click skips to its end.
-void playScene(Platform& platform, Assets& assets, std::string_view name);
+// Plays a scene script such as "TITLE", from the shared files or else an
+// episode's. A key or click skips to its end.
+void playScene(Platform& platform, Assets& assets, std::string_view name, const Archive* episode = nullptr);
 
 } // namespace helmsman::sequel

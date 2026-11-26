@@ -34,6 +34,7 @@
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/gfx/palette.hpp"
 #include "helmsman/gfx/png.hpp"
+#include "helmsman/sequel/machine.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -190,6 +191,60 @@ int main(int argc, char** argv) {
                         anim.framesPerSecond());
             if (argc >= 6) {
                 writePng(argv[5], sheet, anim.palette());
+            }
+        } else if (what == "jrspace" && argc >= 4) {
+            // Traces a space script of the sequel: jrspace FEDS [event...],
+            // each event the index in the table an event loop waits on.
+            const auto program = source->read(programName(source->game()));
+            sequel::Machine m(*program);
+            m.loadSaved(*source->read("SAVEGAME.NEW"));
+            std::string ep = argv[3];
+            const auto archive = Archive::open(*source, ep.substr(0, ep.size() - 1));
+            m.loadSpaceScript(archive.need(ep + ".RDF"));
+            std::printf("episode %s #%d state %d resume %04x\n", m.text(sequel::ds::kEpisodeName).c_str(),
+                        m.s16(sequel::ds::kEpisode), m.s16(sequel::ds::kState), m.u16(sequel::ds::kResume));
+            int nextEvent = 4;
+            std::uint16_t at = m.u16(sequel::ds::kResume);
+            for (int round = 0; round < 40; ++round) {
+                int last = -1;
+                m.runSpace(at, [&](sequel::ScriptCall& c, std::uint32_t& result) {
+                    last = c.function;
+                    std::printf("  %04x cmd %02x", m.cpu.read16(m.cpu.s[X86::SS], m.cpu.r[X86::SP]) - 5, c.function);
+                    for (int i = 0; i < 6; ++i) {
+                        const auto v = c.arg(i);
+                        const auto t = m.scriptText(sequel::Machine::kSpace, v, 40);
+                        std::printf(" %04x", v);
+                        if (v > 0x0c && t.size() >= 3 && std::all_of(t.begin(), t.end(), [](char ch) { return ch >= 32 && ch < 127; })) {
+                            std::printf("\"%s\"", t.c_str());
+                        }
+                    }
+                    std::printf("\n");
+                    result = 0;
+                    if (c.function == 0) {
+                        m.set16(sequel::ds::kResume, static_cast<std::uint16_t>(m.u16(sequel::ds::kResume) + 3));
+                    }
+                    switch (c.function) {
+                    case 0x00: case 0x07: case 0x17: case 0x18: case 0x19: case 0x1A:
+                        return sequel::Machine::Flow::Yield;
+                    default:
+                        return sequel::Machine::Flow::Go;
+                    }
+                });
+                at = m.u16(sequel::ds::kResume);
+                std::printf("yield %02x, resume %04x\n", last, at);
+                if (last == 0x18) {
+                    std::printf("  events:");
+                    for (int i = 0; i < 7; ++i) {
+                        std::printf(" %04x", m.spaceWord(static_cast<std::uint16_t>(at + 2 * i)));
+                    }
+                    std::printf("\n");
+                    const int pick = 4 + round < argc ? std::atoi(argv[4 + round]) : 3;
+                    (void)nextEvent;
+                    at = m.spaceWord(static_cast<std::uint16_t>(at + 2 * pick));
+                    if (at == 0) break;
+                } else if (last == 0x1A || last == 0x07) {
+                    break;
+                }
             }
         } else if (what == "bank" && argc >= 4) {
             // A sound bank: bank FILE.VCC lists it; bank FILE.VCC NAME OUT.raw

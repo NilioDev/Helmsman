@@ -904,6 +904,22 @@ void X86::callFar(std::uint16_t seg, std::uint16_t off, std::uint64_t maxSteps) 
     throw CpuError("room code ran too long");
 }
 
+void X86::run(std::uint16_t seg, std::uint16_t off, std::uint64_t maxSteps) {
+    s[CS] = seg;
+    ip = off;
+    stopRequested = false;
+    for (std::uint64_t n = 0; n < maxSteps; ++n) {
+        if (s[CS] == kHostSegment && ip == kStopOffset) {
+            throw CpuError("script code returned");
+        }
+        step();
+        if (stopRequested) {
+            return;
+        }
+    }
+    throw CpuError("script code ran too long");
+}
+
 void X86::callNear(std::uint16_t seg, std::uint16_t off, std::uint64_t maxSteps) {
     // A near call from a far stub: push a far return to the stop address,
     // then a near return to a RETF placed just before the stop offset.

@@ -272,8 +272,11 @@ bool Scene::run(int frame) {
 
 } // namespace
 
-void playScene(Platform& platform, Assets& assets, std::string_view name) {
-    const auto bytes = assets.data().load(upper(name) + ".DEM");
+void playScene(Platform& platform, Assets& assets, std::string_view name, const Archive* episode) {
+    auto bytes = assets.data().load(upper(name) + ".DEM");
+    if (!bytes && episode != nullptr) {
+        bytes = episode->load(upper(name) + ".DEM");
+    }
     if (!bytes) {
         return;
     }

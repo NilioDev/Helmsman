@@ -77,6 +77,9 @@ public:
     // Throws CpuError on an instruction it does not know, or after
     // `maxSteps` instructions.
     void callFar(std::uint16_t seg, std::uint16_t off, std::uint64_t maxSteps = 5'000'000);
+    // Runs code from seg:off until the host sets stopRequested. For code
+    // that never returns, such as the sequel's space scripts.
+    void run(std::uint16_t seg, std::uint16_t off, std::uint64_t maxSteps = 5'000'000);
     // Calls code at seg:off as a near procedure (in CS = seg).
     void callNear(std::uint16_t seg, std::uint16_t off, std::uint64_t maxSteps = 5'000'000);
 
