@@ -9,7 +9,6 @@ namespace helmsman::sequel::detail {
 namespace {
 
 namespace rec {
-constexpr std::uint16_t kFlags = 0x00;
 constexpr std::uint16_t kX = 0x0C;
 constexpr std::uint16_t kY = 0x0E;
 constexpr std::uint16_t kTeam = 0x45;

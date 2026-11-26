@@ -10,6 +10,11 @@ function(hlm_set_warnings target)
         endif()
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wconversion)
+        # Clang's -Wconversion also warns of every signed/unsigned mix, which
+        # GCC's leaves out for C++; keep the two compilers alike.
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            target_compile_options(${target} PRIVATE -Wno-sign-conversion)
+        endif()
         if(HLM_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE -Werror)
         endif()

@@ -42,7 +42,6 @@ constexpr std::uint16_t kY = 0x0E;
 constexpr std::uint16_t kFollow = 0x18;
 constexpr std::uint16_t kCode = 0x44;
 constexpr std::uint16_t kTeam = 0x45;
-constexpr std::uint16_t kHeld = 0x46;
 constexpr std::uint16_t kLetter = 0x48;
 constexpr std::uint16_t kFacing = 0x49;
 constexpr std::uint16_t kNextFacing = 0x4A;
@@ -57,7 +56,6 @@ constexpr std::uint8_t kDone = 0x10;
 
 namespace team {
 constexpr std::uint8_t kBeamed = 0x01;
-constexpr std::uint8_t kHeld = 0x02;
 constexpr std::uint8_t kOnTeam = 0x04;
 constexpr std::uint8_t kShown = 0x08;
 constexpr std::uint8_t kFollows = 0x10;
@@ -74,8 +72,6 @@ constexpr std::uint16_t kMouseX = 0xC212;
 constexpr std::uint16_t kMouseY = 0xC214;
 constexpr std::uint16_t kQuiet = 0xC21E;
 constexpr std::uint16_t kNotHandled = 0xC21F;
-constexpr std::uint16_t kResultA = 0xC222;
-constexpr std::uint16_t kResultB = 0xC224;
 constexpr std::uint16_t kTimers = 0xC202; // 8 words
 } // namespace spot
 
@@ -84,9 +80,7 @@ namespace ev {
 constexpr std::uint8_t kTick = 0x00;
 constexpr std::uint8_t kWalk = 0x01;
 constexpr std::uint8_t kUse = 0x02;
-constexpr std::uint8_t kGet = 0x03;
 constexpr std::uint8_t kLook = 0x04;
-constexpr std::uint8_t kTalk = 0x05;
 constexpr std::uint8_t kExit = 0x06;
 constexpr std::uint8_t kEnterArea = 0x07;
 constexpr std::uint8_t kInArea = 0x08;
