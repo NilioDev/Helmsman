@@ -484,6 +484,12 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
         set = m_.cpu.read8(seg, static_cast<std::uint16_t>(who + 4));
         name = m_.scriptText(seg, static_cast<std::uint16_t>(who + 6), 24);
     }
+    if (speakerName_ != nullptr) {
+        name = *speakerName_;
+        set = 8;
+        bx = 0x14;
+        by = 0x14;
+    }
     const bool menu = menuTitle_ != nullptr;
     if (menu) {
         name = *menuTitle_;
@@ -649,6 +655,64 @@ int Game::menuBox(const std::string& title, const std::vector<std::string>& choi
     return say(-1, choices, 0);
 }
 
+int Game::sayAs(const std::string& name, const std::string& text) {
+    speakerName_ = &name;
+    struct Reset {
+        const std::string*& t;
+        ~Reset() { t = nullptr; }
+    } reset{speakerName_};
+    return say(-1, {text}, 0);
+}
+
+// The admiral's word on the episode just done (space command 0x13): how
+// many of its points were earned sets the rating, which is kept for the
+// captain's record and makes the ship a little stronger (see
+// resetSpace()). `shown`: the admiral says it on the viewscreen.
+void Game::evaluation(bool shown) {
+    const int best = m_.s16(kEpisodePoints);
+    const int got = std::clamp<int>(m_.s16(kEpisodeScore), 0, std::max(0, best));
+    const int percent = best > 0 ? got * 100 / best : 0;
+    // The ratings from worst (0) to best (4).
+    static constexpr const char* kWords[5] = {
+        "#EVAL005#I'll be frank Kirk, Starfleet expects more out of you than that.  If I were you, I'd do some "
+        "serious soul-searching about my command ability. I would expect as much from a cadet.  But from "
+        "Starfleet's finest... I'm going to have to forward my concerns to Command. Cain out.",
+        "#EVAL004#While you acheived the desired results for your assignment, Jim, I can only give you a "
+        "satifactory rating.  I would expect as much from a cadet.  I'm concerned about your performance and am "
+        "going to have to forward my concerns to Command. Cain out.",
+        "#EVAL003#Well done, Kirk. Keep up the good work. I must say, however, your performance is not what we've "
+        "come to expect from James T. Kirk. I guess we all have our off days, Captain. Cain out.",
+        "#EVAL002#The top brass at Starfleet are impressed with the results of your recent performance.  "
+        "Outstanding work, Jim.  Keep up the good work. Cain out.",
+        "#EVAL001#I am very pleased with your performance. It was a perfect mission, Jim! Your reputation as "
+        "Starfleet's best starship captain is secure. Cain out.",
+    };
+    const int rating = percent <= 50 ? 0 : percent <= 70 ? 1 : percent <= 85 ? 2 : percent <= 99 ? 3 : 4;
+    if (shown) {
+        setSprite(viewscreen_, "TLKWOMAN");
+        viewscreen_.x = kViewscreenX;
+        viewscreen_.y = kViewscreenY;
+        viewscreen_.still = true;
+        viewscreenTalks_ = true;
+        const std::string admiral = "Admiral Cain";
+        pendingTalker_ = kViewscreenSpeaker;
+        sayAs(admiral, "#EVAL000#I've reviewed your report from your recent assignment, Captain and have a few comments.");
+        pendingTalker_ = kViewscreenSpeaker;
+        sayAs(admiral, kWords[rating]);
+        viewscreen_.shown = false;
+        viewscreenTalks_ = false;
+    }
+    const int episode = m_.s16(ds::kEpisode);
+    if (episode >= 0 && episode < 8) {
+        m_.set16(static_cast<std::uint16_t>(kRatings + 2 * episode), static_cast<std::uint16_t>(rating));
+        m_.set16(kRatingSum, static_cast<std::uint16_t>(m_.s16(kRatingSum) + rating));
+        m_.set16(kRatingPercent, static_cast<std::uint16_t>(m_.s16(kRatingSum) * 100 / ((episode + 1) * 4)));
+    }
+    // Scotty's extra power lasts longer, and the ship is a little better.
+    m_.set16(fight::kBoostTicks, static_cast<std::uint16_t>(m_.s16(fight::kBoostTicks) + rating * 15));
+    m_.set16(fight::kBoostSpare, static_cast<std::uint16_t>(m_.s16(fight::kBoostSpare) + rating / 2));
+}
+
 // A line or a choice as the scripts lay it out: who says it, then the
 // offsets of the texts, ending with 0.
 int Game::sayStruct(std::uint16_t seg, std::uint16_t at) {
@@ -802,6 +866,39 @@ Machine::Flow Game::spaceCommand(ScriptCall& c, std::uint32_t& result) {
     case 0x05:
     case 0x06:
     case 0x10:
+        result = shipCommand(c);
+        return Machine::Flow::Go;
+    case 0x13:
+        // The episode is judged (a name of the place first; nothing is
+        // said without one).
+        evaluation(!m_.scriptText(seg, c.arg(0), 0x80).empty());
+        return Machine::Flow::Go;
+    case 0x2A:
+        gameOverMenu();
+        return Machine::Flow::Go;
+    case 0x2E: { // the bridge's colours change (the lights go out)
+        const auto name = m_.scriptText(seg, c.arg(0), 10);
+        if (const auto pal = file(name + ".PAL"); pal && pal->size() >= 768) {
+            palette_ = Palette::fromBytes(std::span<const std::uint8_t>(*pal).first(768));
+        }
+        return Machine::Flow::Go;
+    }
+    case 0x11: { // a person on the bridge does something: (who, animation, x, y, wait)
+        const int who = c.sarg(0);
+        const auto name = m_.scriptText(seg, c.arg(1), 10);
+        if (who >= 0 && who < kCrew && !name.empty() && static_cast<std::uint8_t>(name[0]) != 0xFF) {
+            setSprite(crew_[who], name);
+            crew_[who].x = c.sarg(2);
+            crew_[who].y = c.sarg(3);
+        }
+        result = static_cast<std::uint32_t>(static_cast<std::uint16_t>(who));
+        return Machine::Flow::Go;
+    }
+    case 0x0F: // to another star system at once
+        m_.set16(ds::kSystem, c.arg(0));
+        return Machine::Flow::Go;
+    case 0x2B: // shields up, weapons armed: ready for a fight
+    case 0x2C:
         result = shipCommand(c);
         return Machine::Flow::Go;
     case cmd::kMusic:

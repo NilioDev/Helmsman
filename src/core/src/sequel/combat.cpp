@@ -108,6 +108,20 @@ void Game::resetSpace(bool state) {
     setupSpace();
     space_->clear();
     space_->setPlayer("ENTERPRI");
+    // Each episode the admiral rated well makes the ship stronger: its
+    // shields by half the rating, its weapons by a quarter.
+    auto& cls = space_->player().cls;
+    for (int e = 0; e < std::min<int>(m_.s16(ds::kEpisode), 8); ++e) {
+        const int rating = std::clamp<int>(m_.s16(static_cast<std::uint16_t>(kRatings + 2 * e)), 0, 4);
+        for (auto& sh : cls.shields) {
+            sh.best += rating / 2;
+            sh.now = sh.best;
+        }
+        for (int part = space::kPortTorpedoes; part <= space::kStarboardPhasers; ++part) {
+            cls.parts[static_cast<std::size_t>(part)].best += rating / 4;
+            cls.parts[static_cast<std::size_t>(part)].now = cls.parts[static_cast<std::size_t>(part)].best;
+        }
+    }
     space_->resetStars();
     spaceEvents_.clear();
     if (!state) {
@@ -613,6 +627,15 @@ std::uint32_t Game::shipCommand(ScriptCall& c) {
         for (int i = space::Space::kFirstStill; i < space::Space::kFirstStill + space::Space::kStills; ++i) {
             space_->remove(i);
         }
+        return 0;
+    case 0x2B: // shields up
+        space_->player().shieldsUp = true;
+        m_.set16(fight::kShields, 1);
+        return 0;
+    case 0x2C: // weapons armed
+        space_->player().weaponsArmed = true;
+        m_.set16(fight::kArmed, 1);
+        bridgePointer();
         return 0;
     case 0x10: // full speed ahead
         space_->setSpeedLevel(9);

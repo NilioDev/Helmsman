@@ -58,6 +58,14 @@ constexpr std::uint16_t kMenuEntry = 14;
 // The text colour sets.
 constexpr std::uint16_t kTextColours = 0x22FE;
 constexpr std::uint16_t kRestoreCode = 0x4FF8; // what a restored checkpoint tells the script
+// The scripts count an episode's points: what could be had, what was.
+constexpr std::uint16_t kEpisodePoints = 0xC222;
+constexpr std::uint16_t kEpisodeScore = 0xC224;
+// The admiral's ratings (0..4) of each episode, their sum, and the whole
+// as a percentage.
+constexpr std::uint16_t kRatings = 0x6032;
+constexpr std::uint16_t kRatingSum = 0x2658;
+constexpr std::uint16_t kRatingPercent = 0xC226;
 
 // Places in a person's record (0x8A bytes).
 namespace actor {
@@ -150,6 +158,7 @@ constexpr std::uint16_t kWaveCount = 0xBF70;      // ships that keep coming, how
 constexpr std::uint16_t kWaveName = 0xC84A;       // and their kind
 constexpr std::uint16_t kBoosted = 0x6E96;        // Scotty's extra power was given
 constexpr std::uint16_t kBoostTicks = 0x6EA0;     // and for how long
+constexpr std::uint16_t kBoostSpare = 0x6E9E;
 } // namespace fight
 
 // Default lines of the bridge crew (as the original says them when the
@@ -316,6 +325,10 @@ private:
     // Set by menuBox for the length of one say().
     const std::string* menuTitle_ = nullptr;
     void sayLine(const Line& line) { say(line.who, {line.text}, 0); }
+    // A line said by someone who is not one of the people (the admiral).
+    int sayAs(const std::string& name, const std::string& text);
+    const std::string* speakerName_ = nullptr;
+    void evaluation(bool shown);
     void playVoice(const std::string& tag);
 
     // Space and fights (combat.cpp).
