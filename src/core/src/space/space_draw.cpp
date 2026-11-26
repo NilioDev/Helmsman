@@ -1,0 +1,538 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Drawing space: the stars, then everything else from the farthest to the
+// nearest. A ship is drawn from the picture of it seen from the side
+// nearest to where the viewer is, stretched and turned to match how it
+// lies exactly.
+#include "helmsman/space/space.hpp"
+
+#include "helmsman/data/reader.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <numbers>
+
+namespace helmsman::space {
+
+namespace {
+
+// The picture sets of the ships seen from many sides.
+constexpr const char* kPictureSets[4] = {"ENT", "KLING", "ORION", "ROM"};
+
+struct ViewPicture {
+    Mat axes;
+    std::shared_ptr<const Bitmap> bitmap;
+};
+
+std::map<std::string, ViewPicture>& viewCache() {
+    static std::map<std::string, ViewPicture> cache;
+    return cache;
+}
+
+// The second game keeps 103 pictures of each ship (KLG00001.R3D on): 13
+// rings from above to below, 15 degrees apart, of 1, 4, 7, 9, 11, 13, 13, 13,
+// 11, 9, 7, 4 and 1 pictures from the bow round to the stern, the other side
+// mirrored. How each picture lies follows from its ring and place.
+const ViewPicture& sequelView(const Archive& archive,
+                              const std::function<std::optional<std::vector<std::uint8_t>>(const std::string&)>& more,
+                              int type, const Vec& v, double len, bool& mirrored) {
+    static constexpr const char* kSets[5] = {"ENT", "KLG", "ORI", "ROM", "FKR"};
+    static constexpr int kFirst[14] = {1, 2, 6, 13, 22, 33, 46, 59, 72, 83, 92, 99, 103, 104};
+    static constexpr int kStep[13] = {0, 0x1E00, 0xF00, 0xB40, 0x900, 0x780, 0x780, 0x780, 0x900, 0xB40, 0xF00, 0x1E00, 0};
+    // From above (0) to below (0x200), and round from the bow.
+    const int fromTop = std::clamp(static_cast<int>(std::acos(std::clamp(v.y / len, -1.0, 1.0)) / std::numbers::pi * 512.0), 0, 512);
+    const int ring = std::clamp(12 - (fromTop * 45 + 960) / 1920, 0, 12);
+    int around = static_cast<int>(std::lround(std::atan2(-static_cast<double>(v.x), -static_cast<double>(v.z)) / std::numbers::pi * 512.0));
+    mirrored = around < 0;
+    around = std::min(std::abs(around), 0x200);
+    const int step = kStep[ring];
+    const int place = step != 0 ? std::min((around * 45 + step / 2) / step, kFirst[ring + 1] - kFirst[ring] - 1) : 0;
+    char name[16];
+    std::snprintf(name, sizeof name, "%s%05d", kSets[std::clamp(type, 0, 4)], kFirst[ring] + place);
+    auto& cache = viewCache();
+    auto found = cache.find(name);
+    if (found == cache.end()) {
+        ViewPicture vp;
+        const std::string file = std::string(name) + ".R3D";
+        auto data = archive.load(file);
+        if (!data && more) {
+            data = more(file);
+        }
+        if (data) {
+            try {
+                vp.bitmap = std::make_shared<const Bitmap>(Bitmap::fromBytes(*data));
+            } catch (const FormatError&) {
+            }
+        }
+        // The picture's own turn: round (h) and up (e).
+        const double h = static_cast<double>(step) * place / 45 / 512.0 * std::numbers::pi;
+        const double e = (static_cast<double>(ring) * 0x780 / 45 - 0x100) / 512.0 * std::numbers::pi;
+        auto fix = [](double x) { return static_cast<std::int16_t>(std::lround(x * (kOne - 1))); };
+        const double cH = std::cos(h), sH = std::sin(h), cE = std::cos(e), sE = std::sin(e);
+        vp.axes.m = {fix(cH), fix(sH * sE), fix(sH * cE), 0, fix(cE), fix(-sE), fix(-sH), fix(cH * sE), fix(cH * cE)};
+        found = cache.emplace(name, vp).first;
+    }
+    return found->second;
+}
+
+} // namespace
+
+int Space::project(std::int32_t v, std::int32_t z) const {
+    if (z <= 0) {
+        return 0;
+    }
+    return static_cast<int>(static_cast<std::int64_t>(v) * focal_ / z);
+}
+
+void Space::placeCamera() {
+    if (!outside_) {
+        camera_ = player().pos;
+        cameraAxes_ = player().axes;
+        // Looking another way turns the camera's axes: the new forward is
+        // the old right, left, up or down (or behind), as the second
+        // game's view menu asks.
+        auto& m = cameraAxes_.m;
+        using Row = std::array<std::int16_t, 3>;
+        auto get = [&m](int r) { return Row{m[3 * r], m[3 * r + 1], m[3 * r + 2]}; };
+        auto put = [&m](int r, const Row& v) {
+            for (int i = 0; i < 3; ++i) {
+                m[static_cast<std::size_t>(3 * r + i)] = v[static_cast<std::size_t>(i)];
+            }
+        };
+        auto neg = [](const Row& v) {
+            return Row{static_cast<std::int16_t>(-v[0]), static_cast<std::int16_t>(-v[1]), static_cast<std::int16_t>(-v[2])};
+        };
+        const Row r = get(0);
+        const Row u = get(1);
+        const Row f = get(2);
+        switch (look_) {
+        case 1: put(0, neg(r)); put(2, neg(f)); break;
+        case 2: put(0, f); put(2, neg(r)); break;
+        case 3: put(0, neg(f)); put(2, r); break;
+        case 4: put(1, neg(f)); put(2, u); break;
+        case 5: put(1, f); put(2, neg(u)); break;
+        default: break;
+        }
+        return;
+    }
+    camera_ = outsidePos_;
+    if (fixed_) {
+        cameraAxes_ = Mat::identity();
+        return;
+    }
+    // Looking at the player's ship: forward towards it, up as near the
+    // world's up as can be.
+    const Vec f = unit(player().pos - camera_);
+    const double fx = f.x / double(kOne), fy = f.y / double(kOne), fz = f.z / double(kOne);
+    // right = up x forward, with up = (0, 1, 0)
+    double rx = fz, ry = 0, rz = -fx;
+    double rl = std::sqrt(rx * rx + rz * rz);
+    if (rl < 1e-6) {
+        rx = 1;
+        rz = 0;
+        rl = 1;
+    }
+    rx /= rl;
+    rz /= rl;
+    // up = forward x right
+    const double ux = fy * rz - fz * ry, uy = fz * rx - fx * rz, uz = fx * ry - fy * rx;
+    auto q = [](double v) { return static_cast<std::int16_t>(std::lround(v * kOne)); };
+    cameraAxes_.m = {q(rx), q(ry), q(rz), q(ux), q(uy), q(uz), q(fx), q(fy), q(fz)};
+}
+
+void Space::resetStars() {
+    for (auto& s : stars_) {
+        s.live = false;
+    }
+}
+
+void Space::lookAt(Object& o) {
+    const Vec rel = o.pos - camera_;
+    o.viewPos = apply(cameraAxes_, rel);
+    o.viewAxes = o.axes * transpose(cameraAxes_);
+    o.distance = isqrt(static_cast<std::int64_t>(rel.x) * rel.x + static_cast<std::int64_t>(rel.y) * rel.y +
+                       static_cast<std::int64_t>(rel.z) * rel.z);
+    o.seen = o.viewPos.z > kNear;
+    if (o.seen) {
+        o.screenX = centreX_ + project(o.viewPos.x, o.viewPos.z);
+        o.screenY = centreY_ - project(o.viewPos.y, o.viewPos.z);
+    }
+}
+
+void Space::drawStars(Surface& to) {
+    const int spreadX = std::max(1, halfW_ * 3 / 2);
+    const int spreadY = std::max(1, halfH_ * 3 / 2);
+    for (std::size_t i = 0; i < stars_.size(); ++i) {
+        Star& s = stars_[i];
+        if (!s.live) {
+            const int sx = static_cast<int>(rng_() & 0x7FFF) % spreadX - spreadX / 2;
+            const int sy = static_cast<int>(rng_() & 0x7FFF) % spreadY - spreadY / 2;
+            const std::int32_t z = focal_ << 3;
+            const Vec local{static_cast<std::int32_t>(static_cast<std::int64_t>(sx) * z / focal_),
+                            static_cast<std::int32_t>(static_cast<std::int64_t>(sy) * z / focal_), z};
+            s.pos = camera_ + applyTransposed(cameraAxes_, local);
+            s.live = true;
+        }
+        const Vec v = apply(cameraAxes_, s.pos - camera_);
+        if (v.z <= kNear || v.z >= 0x4000 || std::abs(v.x) > v.z || std::abs(v.y) > v.z) {
+            s.live = false;
+            continue;
+        }
+        if (i >= starPictures_.size()) {
+            continue;
+        }
+        const Bitmap& b = starPictures_[i];
+        const int left = centreX_ + project(v.x, v.z);
+        const int top = centreY_ - project(v.y, v.z);
+        for (int y = 0; y < b.height(); ++y) {
+            for (int x = 0; x < b.width(); ++x) {
+                const std::uint8_t c = b.pixels.at(x, y);
+                if (c != 0 && view_.contains(left + x, top + y)) {
+                    to.set(left + x, top + y, c);
+                }
+            }
+        }
+    }
+}
+
+void Space::drawPicture(Surface& to, const Bitmap& b, bool mirrored, const double a[4], int x, int y) {
+    // a maps the picture's own offsets (right, up) to the view's; draw by
+    // mapping each pixel of the view back into the picture.
+    const double det = a[0] * a[3] - a[1] * a[2];
+    if (std::abs(det) < 1e-9) {
+        return;
+    }
+    const double inv[4] = {a[3] / det, -a[1] / det, -a[2] / det, a[0] / det};
+    const int w = b.width();
+    const int h = b.height();
+    double minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    const double corners[4][2] = {{-b.handleX - 1.0, -b.handleY - 1.0},
+                                  {w - b.handleX + 1.0, -b.handleY - 1.0},
+                                  {-b.handleX - 1.0, h - b.handleY + 1.0},
+                                  {w - b.handleX + 1.0, h - b.handleY + 1.0}};
+    for (const auto& c : corners) {
+        const double vx = a[0] * c[0] + a[1] * -c[1];
+        const double vy = a[2] * c[0] + a[3] * -c[1];
+        minX = std::min(minX, vx);
+        maxX = std::max(maxX, vx);
+        minY = std::min(minY, -vy);
+        maxY = std::max(maxY, -vy);
+    }
+    const int left = std::max(view_.left, x + static_cast<int>(std::floor(minX)));
+    const int right = std::min(view_.right, x + static_cast<int>(std::ceil(maxX)) + 1);
+    const int top = std::max(view_.top, y + static_cast<int>(std::floor(minY)));
+    const int bottom = std::min(view_.bottom, y + static_cast<int>(std::ceil(maxY)) + 1);
+    for (int sy = top; sy < bottom; ++sy) {
+        for (int sx = left; sx < right; ++sx) {
+            const double vx = sx - x + 0.5;
+            const double vy = -(sy - y + 0.5);
+            const double pa = inv[0] * vx + inv[1] * vy;
+            const double pb = -(inv[2] * vx + inv[3] * vy);
+            const int px = static_cast<int>(std::floor(pa)) + b.handleX;
+            const int py = static_cast<int>(std::floor(pb)) + b.handleY;
+            if (px < 0 || py < 0 || px >= w || py >= h) {
+                continue;
+            }
+            const std::uint8_t c = b.pixels.at(mirrored ? w - 1 - px : px, py);
+            if (c != 0) {
+                to.set(sx, sy, c);
+            }
+        }
+    }
+}
+
+void Space::drawBeam(Surface& to, const Object& o) {
+    // A phaser beam: a band from 200 behind the shot to 200 ahead of it,
+    // wider where it is nearer, in three shades.
+    const Vec f = o.viewAxes.row(2);
+    const Vec d{static_cast<std::int32_t>(static_cast<std::int64_t>(f.x) * 200 / kOne),
+                static_cast<std::int32_t>(static_cast<std::int64_t>(f.y) * 200 / kOne),
+                static_cast<std::int32_t>(static_cast<std::int64_t>(f.z) * 200 / kOne)};
+    const Vec a = o.viewPos - d;
+    const Vec b = o.viewPos + d;
+    if (a.z < kNear || b.z < kNear) {
+        return;
+    }
+    const double ax = centreX_ + project(a.x, a.z);
+    const double ay = centreY_ - project(a.y, a.z);
+    const double bx = centreX_ + project(b.x, b.z);
+    const double by = centreY_ - project(b.y, b.z);
+    const double wa = std::clamp(project(o.size >> 3, a.z), 1, 99);
+    const double wb = std::clamp(project(o.size >> 3, b.z), 1, 99);
+    const double len = std::hypot(bx - ax, by - ay);
+    const int steps = std::max(1, static_cast<int>(len * 2));
+    const std::uint8_t shades[3] = {static_cast<std::uint8_t>(o.colour + 2), o.colour, static_cast<std::uint8_t>(o.colour + 4)};
+    const double widths[3] = {1.0, 0.6, 0.25};
+    for (int layer = 0; layer < 3; ++layer) {
+        for (int i = 0; i <= steps; ++i) {
+            const double t = static_cast<double>(i) / steps;
+            const double cx = ax + (bx - ax) * t;
+            const double cy = ay + (by - ay) * t;
+            const double r = (wa + (wb - wa) * t) * widths[layer] / 2.0;
+            const int r0 = static_cast<int>(std::floor(cx - r));
+            const int r1 = static_cast<int>(std::ceil(cx + r));
+            const int c0 = static_cast<int>(std::floor(cy - r));
+            const int c1 = static_cast<int>(std::ceil(cy + r));
+            for (int yy = c0; yy <= c1; ++yy) {
+                for (int xx = r0; xx <= r1; ++xx) {
+                    const double dx = xx + 0.5 - cx;
+                    const double dy = yy + 0.5 - cy;
+                    if (dx * dx + dy * dy <= r * r + 0.25 && view_.contains(xx, yy)) {
+                        to.set(xx, yy, shades[layer]);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void Space::drawObject(Surface& to, Object& o) {
+    if (!o.seen) {
+        return;
+    }
+    const double z = o.viewPos.z;
+    auto scaleFor = [&](int k) { return std::clamp(static_cast<double>(focal_) * k / z, 0.01, 10.0); };
+    if (o.kind == Kind::Shot) {
+        if (o.type == kPhaser) {
+            drawBeam(to, o);
+            return;
+        }
+        std::string name;
+        int k = o.scale;
+        switch (o.type) {
+        case kTorpedo: name = (o.life & 1) ? "shot2" : "shot1"; break;
+        case kPlasma:
+            name = "plasm" + std::to_string(ticks_ & 3);
+            k = o.scale + static_cast<int>((ticks_ / 4) % 8);
+            break;
+        case kBlast: name = "expl0" + std::to_string(o.life & 3); break;
+        default: return;
+        }
+        if (const auto b = picture(name)) {
+            const double s = scaleFor(k);
+            const double a[4] = {s, 0, 0, s};
+            drawPicture(to, *b, false, a, o.screenX, o.screenY);
+        }
+        if (o.type == kBlast && o.life == 5 && sound) {
+            sound(0x26);
+        }
+        return;
+    }
+    if (o.kind == Kind::Still) {
+        if (const auto b = picture(o.stillName)) {
+            const double s = scaleFor(o.scale);
+            const double a[4] = {s, 0, 0, s};
+            drawPicture(to, *b, false, a, o.screenX, o.screenY);
+        }
+        return;
+    }
+    if (o.kind == Kind::Planet) {
+        drawPlanet(to, o);
+        return;
+    }
+    if (o.kind != Kind::Ship) {
+        return;
+    }
+    if (!o.destroyed || o.blastFrame < 21) {
+        if (o.cloakLevel < 28 || !o.cloaked) {
+            // Where the viewer stands, as the ship sees it.
+            const Vec v = apply(o.viewAxes, -o.viewPos);
+            const double len = std::max(1.0, std::sqrt(static_cast<double>(v.x) * v.x + static_cast<double>(v.y) * v.y +
+                                                       static_cast<double>(v.z) * v.z));
+            const ViewPicture* view = nullptr;
+            bool mirrored = false;
+            if (sequel_) {
+                view = &sequelView(archive_, moreFiles_, o.type, v, len, mirrored);
+            } else {
+                const int heading = (angleOf(v.x, v.z) + 0x2A) & (kTurn - 1);
+                const int sector = heading * 12 / kTurn;
+                const int fromTop = static_cast<int>(std::acos(std::clamp(v.y / len, -1.0, 1.0)) / std::numbers::pi * 512.0);
+                const int level = std::min(6, (fromTop * 6 + 0x100) / 0x200);
+                int around = sector;
+                if (sector > 6) {
+                    around = 12 - sector;
+                    mirrored = true;
+                }
+                if (level == 0 || level == 6) {
+                    around = 0;
+                    mirrored = false;
+                }
+                char name[16];
+                std::snprintf(name, sizeof name, "%s%d%d", kPictureSets[std::clamp(o.type, 0, 3)], around, level);
+                auto& cache = viewCache();
+                auto found = cache.find(name);
+                if (found == cache.end()) {
+                    ViewPicture vp;
+                    if (const auto data = archive_.load(std::string(name) + ".R3S"); data && data->size() > 36) {
+                        try {
+                            Reader r(*data);
+                            for (auto& e : vp.axes.m) {
+                                e = r.s16();
+                            }
+                            vp.bitmap = std::make_shared<const Bitmap>(
+                                Bitmap::fromBytes(std::span<const std::uint8_t>(*data).subspan(36)));
+                        } catch (const FormatError&) {
+                        }
+                    }
+                    found = cache.emplace(name, vp).first;
+                }
+                view = &found->second;
+            }
+            if (view->bitmap) {
+                Mat m = view->axes;
+                if (mirrored) {
+                    m.at(0, 1) = static_cast<std::int16_t>(-m.at(0, 1));
+                    m.at(0, 2) = static_cast<std::int16_t>(-m.at(0, 2));
+                    m.at(1, 0) = static_cast<std::int16_t>(-m.at(1, 0));
+                    m.at(2, 0) = static_cast<std::int16_t>(-m.at(2, 0));
+                }
+                // The picture shows the ship's axes as `m` puts them; find the
+                // stretch that puts them where `viewAxes` has them, using the
+                // two axes the picture shows most clearly.
+                double best = 0;
+                int bi = 0;
+                int bj = 1;
+                for (int i = 0; i < 3; ++i) {
+                    for (int j = i + 1; j < 3; ++j) {
+                        const double d = std::abs(static_cast<double>(m.at(i, 0)) * m.at(j, 1) -
+                                                  static_cast<double>(m.at(i, 1)) * m.at(j, 0));
+                        if (d > best) {
+                            best = d;
+                            bi = i;
+                            bj = j;
+                        }
+                    }
+                }
+                double a[4] = {1, 0, 0, 1};
+                const double p00 = m.at(bi, 0), p01 = m.at(bj, 0), p10 = m.at(bi, 1), p11 = m.at(bj, 1);
+                const double det = p00 * p11 - p01 * p10;
+                if (std::abs(det) > 1.0) {
+                    const double i00 = p11 / det, i01 = -p01 / det, i10 = -p10 / det, i11 = p00 / det;
+                    const double r00 = o.viewAxes.at(bi, 0), r01 = o.viewAxes.at(bj, 0);
+                    const double r10 = o.viewAxes.at(bi, 1), r11 = o.viewAxes.at(bj, 1);
+                    a[0] = r00 * i00 + r01 * i10;
+                    a[1] = r00 * i01 + r01 * i11;
+                    a[2] = r10 * i00 + r11 * i10;
+                    a[3] = r10 * i01 + r11 * i11;
+                }
+                const double s = scaleFor(o.scale);
+                for (double& e : a) {
+                    e *= s;
+                }
+                drawPicture(to, *view->bitmap, mirrored, a, o.screenX, o.screenY);
+            }
+        }
+    }
+    if (o.destroyed && o.blastFrame >= 0) {
+        char name[16];
+        std::snprintf(name, sizeof name, "BigExp%02d", std::min(o.blastFrame, 45));
+        if (const auto b = picture(name)) {
+            const double s = scaleFor(o.blastFrame >= 24 ? 12 : 6);
+            const double a[4] = {s, 0, 0, s};
+            drawPicture(to, *b, false, a, o.screenX, o.screenY);
+        }
+    }
+}
+
+void Space::drawStatic(Surface& to) {
+    char name[16];
+    std::snprintf(name, sizeof name, "STATIC%d.BMP", static_cast<int>(rng_() % 5));
+    if (const auto data = archive_.load(name)) {
+        try {
+            const Bitmap b = Bitmap::fromBytes(*data);
+            for (int y = view_.top; y < view_.bottom; ++y) {
+                for (int x = view_.left; x < view_.right; ++x) {
+                    const int bx = (x - view_.left) % std::max(1, b.width());
+                    const int by = (y - view_.top) % std::max(1, b.height());
+                    const std::uint8_t c = b.pixels.at(bx, by);
+                    if (c != 0) {
+                        to.set(x, y, c);
+                    }
+                }
+            }
+        } catch (const FormatError&) {
+        }
+    }
+}
+
+void Space::drawPlanet(Surface& to, const Object& o) {
+    if (!planetLook_ || planetSurface_.empty()) {
+        return;
+    }
+    // From inside the globe nothing of it is seen.
+    if (o.distance <= kPlanetRadius * kPlanetPixels.back() / 12) {
+        return;
+    }
+    // Which side of it the watcher sees: the way from the eye to the
+    // planet in the planet's own frame.
+    const Vec local = apply(o.axes, o.pos - camera_);
+    const double across = std::hypot(static_cast<double>(local.x), static_cast<double>(local.z));
+    const int heading = angleOf(local.x, local.z) - kTurn / 2;
+    const int latitude = static_cast<int>(std::lround(std::atan2(static_cast<double>(local.y), across) * kTurn /
+                                                      (2 * std::numbers::pi)));
+    // The nearer, the finer the picture it is drawn from.
+    const std::int64_t z = o.viewPos.z;
+    const std::int64_t far = static_cast<std::int64_t>(kPlanetRadius) * focal_;
+    int size = 4;
+    if (z >= far) {
+        size = 0;
+    } else if (z >= far / 2) {
+        size = 1;
+    } else if (z >= far / 3) {
+        size = 2;
+    } else if (z >= far / 4) {
+        size = 3;
+    }
+    const Bitmap b = planetPicture(*planetLook_, planetSurface_, size, -heading, latitude);
+    const int scale = kPlanetRadius / kPlanetShrink[static_cast<std::size_t>(size)];
+    const double s = std::clamp(static_cast<double>(focal_) * scale / static_cast<double>(z), 0.01, 200.0);
+    const double a[4] = {s, 0, 0, s};
+    drawPicture(to, b, false, a, o.screenX, o.screenY);
+}
+
+void Space::draw(Surface& to) {
+    placeCamera();
+    to.fillRect(view_.left, view_.top, view_.right - view_.left, view_.bottom - view_.top, 0);
+    drawStars(to);
+    std::vector<Object*> shown;
+    for (int i = 0; i < kObjects; ++i) {
+        Object& o = object(i);
+        if (o.kind == Kind::None) {
+            continue;
+        }
+        if (o.kind == Kind::Ship) {
+            if (o.destroyed && ++o.blastFrame > 45) {
+                if (i == kPlayer) {
+                    playerDead_ = true;
+                } else {
+                    remove(i);
+                    continue;
+                }
+            }
+            o.cloakLevel = o.cloaked ? std::min(o.cloakLevel + 1, 28) : std::max(o.cloakLevel - 1, 0);
+        }
+        if (i == kPlayer && !outside_) {
+            continue;
+        }
+        lookAt(o);
+        if (o.seen) {
+            shown.push_back(&o);
+        }
+    }
+    if (planet_.kind == Kind::Planet && planetLook_) {
+        lookAt(planet_);
+        if (planet_.seen) {
+            shown.push_back(&planet_);
+        }
+    }
+    std::stable_sort(shown.begin(), shown.end(), [](const Object* a, const Object* b) { return a->distance > b->distance; });
+    for (Object* o : shown) {
+        drawObject(to, *o);
+    }
+    if (static_) {
+        drawStatic(to);
+    }
+}
+
+} // namespace helmsman::space

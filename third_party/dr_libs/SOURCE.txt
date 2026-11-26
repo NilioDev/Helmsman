@@ -1,0 +1,4 @@
+dr_mp3 by David Reid, public domain or MIT-0 (licence at the end of the file).
+From https://github.com/mackron/dr_libs at commit 35b5c392cc15456736c440a68dbe073178bbffe0, unchanged.
+Helmsman uses it to play a CD's music tracks that a disc image keeps as .mp3 files.
+(.flac files are read with the dr_flac that libchdr carries.)

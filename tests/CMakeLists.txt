@@ -1,0 +1,6 @@
+file(GLOB HLM_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+add_executable(hlm_tests ${HLM_TEST_SOURCES})
+target_link_libraries(hlm_tests PRIVATE helmsman::core)
+target_compile_definitions(hlm_tests PRIVATE HELMSMAN_GAMEDATA_DIR="${PROJECT_SOURCE_DIR}/gamedata")
+hlm_set_warnings(hlm_tests)
+add_test(NAME hlm_tests COMMAND hlm_tests)
