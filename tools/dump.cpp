@@ -27,11 +27,13 @@
 #include "helmsman/data/game_source.hpp"
 #include "helmsman/engine/fiber.hpp"
 #include "helmsman/data/archive.hpp"
+#include "helmsman/data/movie.hpp"
 #include "helmsman/data/reader.hpp"
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/gfx/palette.hpp"
 #include "helmsman/gfx/png.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <deque>
@@ -122,6 +124,41 @@ int main(int argc, char** argv) {
                 pic.draw(sheet, 32 + (i % 5) * 64, 32 + (i / 5) * 64 - 20);
             }
             writePng(argv[3], sheet, Palette::fromBytes(archive.need("BRIDGE.PAL")));
+        } else if (what == "movie" && argc >= 5) {
+            // A film's pictures side by side: movie PATH FRAME,FRAME,... OUT.png
+            // (no frames: counts the pictures and the sound).
+            auto data = source->read(argv[3]);
+            if (!data) {
+                std::fprintf(stderr, "no such file\n");
+                return 1;
+            }
+            Movie movie(std::move(*data));
+            std::vector<int> wanted;
+            std::stringstream list(argv[4]);
+            for (std::string item; std::getline(list, item, ',');) {
+                wanted.push_back(std::stoi(item));
+            }
+            std::vector<Surface> shots;
+            int frame = 0;
+            std::size_t sound = 0;
+            while (movie.next()) {
+                sound += movie.takeSound().size();
+                if (std::find(wanted.begin(), wanted.end(), frame) != wanted.end()) {
+                    Surface shot(movie.width(), movie.height());
+                    std::copy(movie.picture().begin(), movie.picture().end(), shot.data());
+                    shots.push_back(std::move(shot));
+                }
+                ++frame;
+            }
+            std::printf("%d pictures of %dx%d, %d us each; %zu sound samples at %d\n", frame, movie.width(),
+                        movie.height(), movie.frameMicros(), sound, movie.soundRate());
+            if (argc >= 6 && !shots.empty()) {
+                Surface sheet(movie.width() * static_cast<int>(shots.size()), movie.height());
+                for (std::size_t i = 0; i < shots.size(); ++i) {
+                    sheet.blit(shots[i], 0, 0, movie.width(), movie.height(), movie.width() * static_cast<int>(i), 0);
+                }
+                writePng(argv[5], sheet, movie.palette());
+            }
         } else if (what == "raw" && argc >= 5) {
             auto data = source->read(argv[3]);
             if (!data) {
