@@ -432,6 +432,31 @@ bool Space::firePhasers(int sx, int sy) {
     return any;
 }
 
+bool Space::ahead(int index) const {
+    const Object& s = object(index);
+    if (s.kind != Kind::Ship || s.destroyed) {
+        return false;
+    }
+    const Object& me = object(kPlayer);
+    const Vec local = apply(me.axes, s.pos - me.pos);
+    return local.z > 0 && std::llabs(local.x) <= local.z && std::llabs(local.y) <= local.z;
+}
+
+bool Space::fireAt(int index, bool torpedoes) {
+    const Object& s = object(index);
+    if (s.kind != Kind::Ship) {
+        return false;
+    }
+    const Vec aim = s.pos - player().pos;
+    const int first = torpedoes ? 0 : 2;
+    bool any = fire(kPlayer, first, &aim);
+    any = fire(kPlayer, first + 1, &aim) || any;
+    if (any && sound) {
+        sound(torpedoes ? 0x25 : 0x24);
+    }
+    return any;
+}
+
 // --- Ships -----------------------------------------------------------------
 
 void Space::power(Object& s, bool isPlayer) {

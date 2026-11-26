@@ -16,7 +16,7 @@ namespace helmsman::sequel::detail {
 namespace {
 
 constexpr const char* kGame = "judgment";
-constexpr std::uint8_t kFormat = 1;
+constexpr std::uint8_t kFormat = 2; // 1: without the ships in space
 constexpr std::uint8_t kOnBridge = 0;
 constexpr std::uint8_t kOnMission = 1;
 constexpr std::size_t kSegment = 0x10000;
@@ -46,6 +46,8 @@ std::vector<std::uint8_t> Game::savePayload() {
     w.u8(away_ ? kOnMission : kOnBridge);
     const std::uint8_t* ds = m_.cpu.memory() + X86::linear(Machine::kData, 0);
     w.bytes(std::span<const std::uint8_t>(ds, kSegment));
+    setupSpace();
+    space_->save(w);
     if (away_) {
         writeAway(w);
     }
@@ -195,7 +197,8 @@ void Game::readAway(SaveReader& r) {
 // mission it was made on picks up from there.
 void Game::restorePayload(std::span<const std::uint8_t> payload) {
     SaveReader r(payload);
-    if (r.u8() != kFormat) {
+    const auto format = r.u8();
+    if (format != kFormat && format != 1) {
         throw FormatError("a saved game of another version");
     }
     const auto where = r.u8();
@@ -208,6 +211,12 @@ void Game::restorePayload(std::span<const std::uint8_t> payload) {
     }
     std::copy(ds.begin(), ds.end(), m_.cpu.memory() + X86::linear(Machine::kData, 0));
     startEpisode(false);
+    // The data segment already holds the fight's own state.
+    resetSpace(false);
+    if (format >= 2) {
+        space_->restore(r);
+    }
+    applyView();
     resumeAway_.reset();
     if (where == kOnMission) {
         resumeAway_.emplace(payload.begin() + static_cast<std::ptrdiff_t>(r.pos()), payload.end());
@@ -220,6 +229,8 @@ void Game::writeCheckpoint(const std::string& name) {
     const auto payload = savePayload();
     writeSave(p_.saveFolder, checkpointGame(name), 0, name, payload);
 }
+
+bool Game::anySaves() const { return !listSaves(p_.saveFolder, kGame).empty(); }
 
 void Game::saveMenu() {
     const auto saves = listSaves(p_.saveFolder, kGame);
@@ -271,6 +282,7 @@ bool Game::loadMenu() {
 // The options (the insignia of Kirk's menu, or the away mission's): the
 // original's panel of buttons. True when the game is to end.
 bool Game::optionsMenu() {
+    HoldSpace hold(*this);
     std::vector<MenuButton> buttons;
     for (const auto& b : menu("MNUOPTN")) {
         // The text display button stays out: Helmsman always shows the text.
@@ -322,7 +334,7 @@ bool Game::optionsMenu() {
 
 // A lost mission: load, start over or quit (room command 0x14).
 void Game::gameOverMenu() {
-    const bool any = !listSaves(p_.saveFolder, kGame).empty();
+    const bool any = anySaves();
     std::vector<std::string> lines;
     if (any) {
         lines.push_back("#GENER006#Load a previously saved game.");

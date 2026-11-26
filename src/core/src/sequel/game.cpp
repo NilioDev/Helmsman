@@ -82,6 +82,7 @@ void Game::startEpisode(bool fresh) {
     m_.loadSpaceScript(episode_->need(base + "S.RDF"));
     if (fresh) {
         resetCrew();
+        resetSpace();
     }
 }
 
@@ -187,7 +188,13 @@ void Game::drawSprite(const Sprite& s) {
 }
 
 void Game::drawBridge() {
+    p_.palette = palette_;
+    if (space_ && fullView()) {
+        drawSpace(true);
+        return;
+    }
     std::copy_n(background_.data(), background_.size(), p_.screen.data());
+    drawSpace(!viewscreen_.shown);
     drawSprite(viewscreen_);
     for (int i = 0; i < kCrew; ++i) {
         drawSprite(talk_[i].shown ? talk_[i] : crew_[i]);
@@ -218,6 +225,12 @@ void Game::pumpTicks() {
         for (int i = 0; i < std::min(fresh, 4); ++i) {
             ++awayTicks_;
             advanceBodies();
+        }
+    } else if (holdSpace_ == 0) {
+        // So does space, also while the crew talks (not while a menu is
+        // open).
+        for (int i = 0; i < std::min(fresh, 4); ++i) {
+            stepSpace();
         }
     }
 }
@@ -254,6 +267,7 @@ int Game::crewAt(int x, int y) {
 // The star map: the player points at a star system and picks it. Returns
 // its number, or -1 when the player changed their mind.
 int Game::starMap() {
+    HoldSpace hold(*this);
     const auto bytes = assets_.data().need("STARMAP.BGD");
     if (bytes.size() < 768 + 64000) {
         throw FormatError("star map too short");
@@ -373,6 +387,7 @@ int Game::chooseButtons(const std::vector<MenuButton>& buttons, int mx, int my) 
     if (buttons.empty()) {
         return -1;
     }
+    HoldSpace hold(*this);
     p_.takeClicks();
     p_.keys.clear();
     while (!p_.quit) {
@@ -625,6 +640,7 @@ int Game::menuBox(const std::string& title, const std::vector<std::string>& choi
     if (choices.empty()) {
         return -1;
     }
+    HoldSpace hold(*this);
     menuTitle_ = &title;
     struct Reset {
         const std::string*& t;
@@ -655,6 +671,9 @@ int Game::sayStruct(std::uint16_t seg, std::uint16_t at) {
 Machine::Flow Game::spaceCommand(ScriptCall& c, std::uint32_t& result) {
     const auto seg = Machine::kSpace;
     result = 0;
+    if (p_.devTrace && c.function != cmd::kPause) {
+        std::fprintf(stderr, "space %02x (%04x %04x %04x)\n", c.function, c.arg(0), c.arg(1), c.arg(2));
+    }
     switch (c.function) {
     case cmd::kTitles:
         m_.set16(ds::kResume, static_cast<std::uint16_t>(m_.u16(ds::kResume) + 3));
@@ -776,6 +795,15 @@ Machine::Flow Game::spaceCommand(ScriptCall& c, std::uint32_t& result) {
         result = static_cast<std::uint32_t>(static_cast<std::uint16_t>(who));
         return Machine::Flow::Go;
     }
+    case 0x01:
+    case 0x02:
+    case 0x03:
+    case 0x04:
+    case 0x05:
+    case 0x06:
+    case 0x10:
+        result = shipCommand(c);
+        return Machine::Flow::Go;
     case cmd::kMusic:
     case cmd::kSong:
     case cmd::kOpenBank:
@@ -806,6 +834,9 @@ bool Game::handle(int offset) {
 void Game::bridgeButton(int id) {
     if (id == button::kKirkOptions) {
         optionsMenu();
+        return;
+    }
+    if (combatButton(id)) {
         return;
     }
     const bool paused = m_.u16(place::kPauseTicks) != 0;
@@ -882,8 +913,11 @@ void Game::bridge() {
             loadBridge();
             ticksDue_ = 0;
             p_.pointerShown = true;
-            p_.pointer = Surface{0, 0};
+            bridgePointer();
         }
+        // The original counts no time while a line is shown or a menu is
+        // open: what piled up meanwhile is let go.
+        ticksDue_ = std::min(ticksDue_, 2);
         // Time passes for the script: a paused script counts down, an
         // event loop gets its tick.
         while (ticksDue_ > 0 && !leaveBridge_) {
@@ -902,9 +936,16 @@ void Game::bridge() {
                 handle(handler::kTick);
             }
         }
+        spaceReports();
+        if (space_ && space_->playerDestroyed()) {
+            gameOverMenu();
+        }
         drawBridge();
         p_.pointerTargets.clear();
         for (const auto& st : kStations) {
+            if (fullView()) {
+                break;
+            }
             const Sprite& s = crew_[st.actor];
             if (s.frames.empty()) {
                 continue;
@@ -918,15 +959,33 @@ void Game::bridge() {
         }
         present();
         bool options = false;
-        for (const auto& k : p_.keys) {
-            options = options || k.scancode == scancode::kEscape || k.text == 'o' || k.text == 'O';
+        std::deque<KeyPress> keys;
+        keys.swap(p_.keys);
+        for (const auto& k : keys) {
+            if (k.scancode == scancode::kEscape) {
+                if (fullView()) {
+                    // Escape leaves the viewscreen for the bridge.
+                    setFullView(false);
+                    setManual(false);
+                } else {
+                    options = true;
+                }
+                continue;
+            }
+            combatKey(k);
+            if (leaveBridge_ || awayPending_) {
+                break;
+            }
         }
-        p_.keys.clear();
         if (options) {
             optionsMenu();
             continue;
         }
-        if ((p_.takeClicks() & 1) != 0) {
+        const auto clicks = p_.takeClicks();
+        if (combatClick(clicks)) {
+            continue;
+        }
+        if ((clicks & 1) != 0) {
             const int who = crewAt(p_.mouseX, p_.mouseY);
             if (who >= 0) {
                 const int id = chooseFromMenu(who);
@@ -939,12 +998,34 @@ void Game::bridge() {
     }
 }
 
+// Before a new game: a saved one may be loaded instead (loadMenu goes
+// there by throwing RestoreGame), then the fights are made as hard as the
+// player likes.
+void Game::startMenu() {
+    loadBridge();
+    p_.pointerShown = true;
+    while (!p_.quit && anySaves()) {
+        const int choice =
+            menuBox("Start Game", {"#GENER006#Load a previously saved game.", "#GENER020#Restart the game."});
+        if (choice == 1 || choice < 0) {
+            break;
+        }
+        loadMenu();
+    }
+    const int level = menuBox("Space Combat Level", {"Federation Cadet (None).", "Academy Graduate (Easy).",
+                                                     "Commissioned Officer (Hard)."});
+    combatLevel_ = level < 0 ? 2 : level;
+}
+
 void Game::newGame() {
     const auto fresh = assets_.source().read("SAVEGAME.NEW");
     if (!fresh) {
         throw FormatError("SAVEGAME.NEW is missing");
     }
     m_.loadSaved(*fresh);
+    if (combatLevel_ >= 0) {
+        m_.set16(ds::kCombatLevel, static_cast<std::uint16_t>(combatLevel_));
+    }
     // A new game starts on the bridge with the first episode.
     m_.set16(ds::kState, 1);
     startEpisode();
@@ -961,10 +1042,14 @@ void Game::run() {
                 }
                 pending.reset();
             } else {
+                if (p_.devStart.empty()) {
+                    startMenu();
+                }
                 newGame();
                 if (!p_.devStart.empty()) {
-                    devAwayMission();
-                    return;
+                    if (devStart()) {
+                        return;
+                    }
                 }
             }
             episodes();
@@ -979,7 +1064,35 @@ void Game::run() {
     }
 }
 
-// For the tools: straight to an away mission ("episode room spawn").
+// For the tools: straight to an away mission ("episode room spawn"), or
+// to a place in an episode's space script ("space episode offset", the
+// offset in hex). True when the game is over after it.
+bool Game::devStart() {
+    std::istringstream in(p_.devStart);
+    std::string first;
+    in >> first;
+    if (first != "space") {
+        devAwayMission();
+        return true;
+    }
+    std::string ep;
+    std::string at;
+    int level = 1;
+    in >> ep >> at >> level;
+    m_.set16(ds::kCombatLevel, static_cast<std::uint16_t>(std::clamp(level, 0, 2)));
+    static const char* const kNames[] = {"fed", "sentnl", "noman", "light", "voids", "scotty", "madness", "meth"};
+    for (int i = 0; i < 8; ++i) {
+        if (ep == kNames[i]) {
+            m_.set16(ds::kEpisode, static_cast<std::uint16_t>(i));
+            m_.setText(ds::kEpisodeName, ep, 0x10);
+        }
+    }
+    startEpisode();
+    loadBridge();
+    resumeSpace(static_cast<std::uint16_t>(std::stoul(at, nullptr, 16)));
+    return false;
+}
+
 void Game::devAwayMission() {
     std::istringstream in(p_.devStart);
     std::string ep;

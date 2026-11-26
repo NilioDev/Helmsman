@@ -214,10 +214,9 @@ private:
     void flybyEvent(const Event& e);
     void steer();
     void drawHud();
-    void drawShipPanels(const space::Object& ship);
     void drawRadar();
     std::string fillReport(const std::string& format, int first, int second);
-    void panelPicture(const std::string& name, bool opaque, int recolour = -1);
+    std::shared_ptr<const Bitmap> hudPicture(const std::string& name);
     void setZoom(int zoom);
     void report(int event, int what, bool player);
     void starMap();

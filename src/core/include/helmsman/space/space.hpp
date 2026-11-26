@@ -206,6 +206,11 @@ public:
     // Fires at the point of the viewscreen; true when anything fired.
     bool fireTorpedoes(int screenX, int screenY);
     bool firePhasers(int screenX, int screenY);
+    // Whether ship `index` lies within 45 degrees of the player's bow
+    // (where weapons can be locked on it, in the second game).
+    bool ahead(int index) const;
+    // Fires phasers or torpedoes straight at ship `index`.
+    bool fireAt(int index, bool torpedoes);
 
     // One tick of space: the player's ship, the others, the shots. Calls
     // `say` for what the crew reports.

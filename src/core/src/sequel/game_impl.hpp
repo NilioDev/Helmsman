@@ -14,6 +14,7 @@
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/sequel/machine.hpp"
 #include "helmsman/sequel/text.hpp"
+#include "helmsman/space/space.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -131,6 +132,25 @@ constexpr std::uint16_t kInOrbit = 0x00C4;
 constexpr std::uint16_t kUnderAttack = 0xC220;
 constexpr std::uint16_t kPauseTicks = 0x5EBE;
 } // namespace place
+
+// Where the bridge keeps the state of a fight (the original's places, so
+// that saved games hold them).
+namespace fight {
+constexpr std::uint16_t kFullView = 0x00C0;       // the viewscreen fills the screen
+constexpr std::uint16_t kManual = 0x00C2;         // the ship is steered by hand
+constexpr std::uint16_t kZoom = 0x00C8;           // magnification, 4..8
+constexpr std::uint16_t kLook = 0x00CA;           // which way the view looks (0..5)
+constexpr std::uint16_t kTargetAnalysis = 0x0104;
+constexpr std::uint16_t kLocked = 0x0108;         // the weapons are locked on targets
+constexpr std::uint16_t kLockTarget = 0x010A;     // the target (-1 none)
+constexpr std::uint16_t kLockStrength = 0x010C;   // ticks it has been ahead, up to 50
+constexpr std::uint16_t kShields = 0xC47E;
+constexpr std::uint16_t kArmed = 0xC482;
+constexpr std::uint16_t kWaveCount = 0xBF70;      // ships that keep coming, how many at once
+constexpr std::uint16_t kWaveName = 0xC84A;       // and their kind
+constexpr std::uint16_t kBoosted = 0x6E96;        // Scotty's extra power was given
+constexpr std::uint16_t kBoostTicks = 0x6EA0;     // and for how long
+} // namespace fight
 
 // Default lines of the bridge crew (as the original says them when the
 // script has nothing to add).
@@ -298,6 +318,40 @@ private:
     void sayLine(const Line& line) { say(line.who, {line.text}, 0); }
     void playVoice(const std::string& tag);
 
+    // Space and fights (combat.cpp).
+    void setupSpace();
+    void resetSpace(bool state = true);
+    void stepSpace();
+    void trackLock();
+    void fireWeapons(bool torpedoes);
+    void drawSpace(bool viewscreenFree);
+    void spaceReports();
+    bool combatButton(int id);
+    bool combatKey(const KeyPress& key);
+    bool combatClick(std::uint8_t clicks);
+    std::uint32_t shipCommand(ScriptCall& call);
+    int spawnShip(const std::string& name);
+    space::Object* enemy(int index);
+    void setManual(bool on);
+    void setFullView(bool on);
+    bool fullView() const;
+    void applyView();
+    int zoom() const;
+    void bridgePointer();
+    std::unique_ptr<space::Space> space_;
+    std::shared_ptr<const Bitmap> weaponLights_;
+    Surface radar_{17, 17};
+    std::deque<std::pair<int, int>> spaceEvents_;
+    // While above 0, space stands still (a menu is open).
+    int holdSpace_ = 0;
+    struct HoldSpace {
+        explicit HoldSpace(Game& g) : game(g) { ++game.holdSpace_; }
+        ~HoldSpace() { --game.holdSpace_; }
+        HoldSpace(const HoldSpace&) = delete;
+        HoldSpace& operator=(const HoldSpace&) = delete;
+        Game& game;
+    };
+
     // Away missions (away.cpp).
     void awayMission();
     // `restoring`: for a saved game, whose data segment already holds what
@@ -311,10 +365,16 @@ private:
     void readAway(SaveReader& r);
     void restorePayload(std::span<const std::uint8_t> payload);
     void saveMenu();
+    bool anySaves() const;
     bool loadMenu();
     void writeCheckpoint(const std::string& name);
     void newGame();
+    void startMenu();
+    // How hard the fights are (0 none, 1 easy, 2 hard), as asked before a
+    // new game; -1 as the new game's file has it.
+    int combatLevel_ = -1;
     void devAwayMission();
+    bool devStart();
     void episodes();
     std::optional<std::vector<std::uint8_t>> readCheckpoint(const std::string& name);
     int chooseButtons(const std::vector<MenuButton>& buttons, int x, int y);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "helmsman/bridge/bridge.hpp"
+#include "helmsman/space/hud.hpp"
 
 #include "bridge/missions.hpp"
 
@@ -662,167 +663,39 @@ void Bridge::flybyEvent(const Event& e) {
     defaultEvent(e);
 }
 
-void Bridge::panelPicture(const std::string& name, bool opaque, int recolour) {
-    // The bridge's panel pictures carry their place on the screen as a
-    // negative handle.
-    std::shared_ptr<const Bitmap> b;
+std::shared_ptr<const Bitmap> Bridge::hudPicture(const std::string& name) {
     try {
-        b = session_.assets.picture(name);
+        return session_.assets.picture(name);
     } catch (const FormatError&) {
-        return;
-    }
-    const int left = -b->handleX;
-    const int top = -b->handleY;
-    for (int y = 0; y < b->height(); ++y) {
-        for (int x = 0; x < b->width(); ++x) {
-            std::uint8_t c = b->pixels.at(x, y);
-            if (c == 0 && !opaque) {
-                continue;
-            }
-            if (c != 0 && recolour >= 0) {
-                c = static_cast<std::uint8_t>(recolour);
-            }
-            scene_.backdrop.set(left + x, top + y, c);
-        }
-    }
-}
-
-void Bridge::drawShipPanels(const space::Object& ship) {
-    static constexpr const char* kNames[4] = {"ent", "klg", "ori", "rom"};
-    const std::string name = kNames[std::clamp(ship.type, 0, 3)];
-    panelPicture("t" + name, true);
-    panelPicture("s" + name, true);
-    // Parts below three quarters of their strength light up.
-    for (int i = 0; i < 10; ++i) {
-        const space::Part& part = ship.cls.parts[static_cast<std::size_t>(i)];
-        if (part.now * 4 < part.best * 3) {
-            char n[16];
-            std::snprintf(n, sizeof n, "%02d", i);
-            panelPicture("t" + name + n, false);
-            panelPicture("s" + name + n, false);
-        }
-    }
-    // The shields, from bright (strong) to dark (weak or down).
-    for (int i = 0; i < 6; ++i) {
-        const space::Part& sh = ship.cls.shields[static_cast<std::size_t>(i)];
-        const int colour = ship.shieldsWork ? 0xB0 + (sh.best - sh.now) * 8 / (sh.best + 1) : 0xB7;
-        char n[24];
-        std::snprintf(n, sizeof n, "%sshd%02d", name.c_str(), i);
-        panelPicture(n, false, colour);
+        return nullptr;
     }
 }
 
 void Bridge::drawRadar() {
     if (!radarBitmap_) {
         radarBitmap_ = std::make_shared<Bitmap>();
-        radarBitmap_->pixels = Surface(17, 17);
         radarBitmap_->handleX = 8;
         radarBitmap_->handleY = 8;
         radar_.x = 0x9F;
         radar_.y = 0x8C;
         radar_.depth = 2;
     }
-    Surface& r = radarBitmap_->pixels;
-    r.fill(0);
-    r.set(8, 8, 0x8B);
-    static constexpr std::uint8_t kColours[4] = {46, 120, 100, 86};
-    for (int i = 0; i < space::Space::kShips; ++i) {
-        const space::Object& o = space_.object(space::Space::kFirstShip + i);
-        if (o.kind != space::Kind::Ship || (o.cloaked && o.cloakLevel >= 20)) {
-            continue;
-        }
-        const space::Vec v = space::apply(space_.player().axes, o.pos - space_.player().pos);
-        const double across = std::hypot(static_cast<double>(v.x), static_cast<double>(v.y));
-        // How far off the bow (0 ahead, 180 degrees behind) sets the
-        // distance from the middle; the direction is where it lies.
-        const double off = std::numbers::pi / 2 - std::atan2(static_cast<double>(v.z), across);
-        const double radius = 16.0 * std::sin(off / 2);
-        const double dir = std::atan2(static_cast<double>(v.y), static_cast<double>(v.x));
-        const int x = static_cast<int>((radius * std::cos(dir) + 1) / 2) + 8;
-        const int y = static_cast<int>((radius * -std::sin(dir) + 1) / 2) + 8;
-        r.set(x, y, kColours[i]);
-    }
+    space::drawRadar(radarBitmap_->pixels, space_, space::HudColours{});
     radar_.bitmap = radarBitmap_;
 }
 
 void Bridge::drawHud() {
-    Surface& to = scene_.backdrop;
-    const space::Object& p = space_.player();
-    auto line = [&to](int x, int y, int len, std::uint8_t c) {
-        for (int i = 0; i < len; ++i) {
-            to.set(x + i, y, c);
-        }
-    };
-    // The weapons: a bar fills as each comes ready again, with a light.
     if (!weaponLights_) {
-        try {
-            weaponLights_ = session_.assets.picture("phasind");
-        } catch (const FormatError&) {
-        }
+        weaponLights_ = hudPicture("phasind");
     }
-    static constexpr int kWeaponAt[4][2] = {{196, 16}, {194, 20}, {90, 16}, {92, 20}};
-    for (int i = 0; i < 4; ++i) {
-        const space::Part& part = p.cls.parts[static_cast<std::size_t>(space::kPortTorpedoes + i)];
-        const space::Mount& m = p.cls.mounts[static_cast<std::size_t>(i)];
-        int fill = 24;
-        int light = 0;
-        std::uint8_t colour = 0x81;
-        if (!p.weaponsArmed) {
-            light = 0;
-        } else if (!p.weaponsWork || part.now < part.best / 2) {
-            light = 0x18;
-        } else {
-            colour = static_cast<std::uint8_t>(0xB1 + (i & 1));
-            if (m.readyAt > space_.ticks()) {
-                fill = 24 - static_cast<int>((m.readyAt - space_.ticks()) * 24 / static_cast<std::uint64_t>(std::max(1, m.reload)));
-                light = 8;
-            } else {
-                light = 0x10;
-            }
-        }
-        const int x = kWeaponAt[i][0];
-        const int y = kWeaponAt[i][1];
-        line(x, y, fill, colour);
-        line(x + fill, y, 24 - fill, 0x81);
-        if (weaponLights_) {
-            const int row = x > 0xA0 ? 3 : 0;
-            for (int yy = 0; yy < 3; ++yy) {
-                for (int xx = 0; xx < 8; ++xx) {
-                    if (weaponLights_->pixels.contains(light + xx, row + yy)) {
-                        to.set(x + 0x1B + xx, y - 1 + yy, weaponLights_->pixels.at(light + xx, row + yy));
-                    }
-                }
-            }
-        }
-    }
-    // The warp engines' power.
-    static constexpr int kPowerAt[2][2] = {{140, 13}, {140, 16}};
-    for (int i = 0; i < 2; ++i) {
-        const space::Part& part = p.cls.parts[static_cast<std::size_t>(space::kPortWarp + i)];
-        const int value = std::min(part.best, part.now + (p.powerBoost > 0 ? 5 : 0));
-        const int len = part.best > 0 ? 0x22 * value / part.best : 0;
-        const int x = kPowerAt[i][0];
-        const int y = kPowerAt[i][1];
-        for (int row = 0; row < 2; ++row) {
-            line(x, y + row, len, 0xB1);
-            line(x + len, y + row, 0x22 - len, 0x81);
-            line(x + 0x23, y + row, 4, p.powerBoost > 0 ? 0x69 : 0x81);
-        }
-    }
-    // Speed: asked for, and made.
-    const std::int32_t maxSpeed = std::max<std::int32_t>(1, p.cls.maxSpeed);
-    const int want = std::max(0, static_cast<int>(static_cast<std::int64_t>(p.wantSpeed) * 25 / maxSpeed));
-    line(0x8F, 0x14, want, 0x69);
-    line(0x8F + want, 0x14, 25 - want, 0);
-    const int made = std::max(0, static_cast<int>(static_cast<std::int64_t>(p.speed) * 24 / maxSpeed));
-    line(0x90, 0x16, made, 0xBA);
-    line(0x90 + made, 0x16, 24 - made, 0);
+    space::drawHudBars(scene_.backdrop, space_, weaponLights_.get(), space::HudColours{});
     if ((space_.ticks() & 3) == 0) {
-        const space::Object* shown = &p;
+        const space::Object* shown = &space_.player();
         if (targetAnalysis_ && space_.lastHit >= 0 && space_.object(space_.lastHit).kind == space::Kind::Ship) {
             shown = &space_.object(space_.lastHit);
         }
-        drawShipPanels(*shown);
+        static const std::vector<std::string> kNames = {"ent", "klg", "ori", "rom"};
+        space::drawShipPanels(scene_.backdrop, *shown, [this](const std::string& n) { return hudPicture(n); }, kNames);
     }
     drawRadar();
 }
