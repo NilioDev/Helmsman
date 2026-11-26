@@ -5,6 +5,7 @@
 #pragma once
 
 #include "helmsman/sequel/game.hpp"
+#include "helmsman/audio/adlib.hpp"
 #include "helmsman/away/assets.hpp"
 #include "helmsman/data/archive.hpp"
 #include "helmsman/data/reader.hpp"
@@ -23,6 +24,7 @@
 #include <optional>
 #include <random>
 #include <deque>
+#include <functional>
 #include <array>
 
 #include "helmsman/away/scene.hpp"
@@ -119,8 +121,8 @@ constexpr int kEventLoop = 0x18;
 constexpr int kAway = 0x19;
 constexpr int kEpisodeOver = 0x1A;
 constexpr int kRandom = 0x1B;
-constexpr int kMusic = 0x1C;
-constexpr int kSong = 0x1D;
+constexpr int kSoundEffect = 0x1C;
+constexpr int kMusic = 0x1D;
 constexpr int kShowCrew = 0x26;
 constexpr int kHideCrew = 0x27;
 constexpr int kCrewFlags = 0x28;
@@ -270,7 +272,11 @@ public:
         }
         font_.setColours(colours);
         rng_.seed(static_cast<unsigned>(p.millis));
+        startMusic();
     }
+    ~Game() { endMusic(); }
+    Game(const Game&) = delete;
+    Game& operator=(const Game&) = delete;
 
     void run();
 
@@ -445,6 +451,36 @@ private:
     std::string roomText(std::uint16_t off, std::size_t max = 256) const;
     int sayRoom(std::uint16_t at);
     void playEffect(const std::string& name);
+    std::optional<PlainSound> findSound(const std::string& name);
+
+    // Music and the numbered sound effects (music.cpp).
+    void startMusic();
+    void endMusic();
+    void loadSuite(const std::string& base, char kind);
+    void openSuite(const std::string& name);
+    void music(int now, int background);
+    void startSong(int song);
+    void setMusicOn(bool on);
+    void pumpMusic();
+    void soundEffect(int number, int volume = 127, int pan = 64);
+    void saveMusic(SaveWriter& w) const;
+    void restoreMusic(SaveReader& r);
+    struct SuiteEffect {
+        std::string name;
+        int slot = -1; // one of the suite's own sounds, or -1
+    };
+    audio::AdLibMusic adlib_;
+    std::string suiteBase_;  // whose music it is ("FED")
+    std::string suiteName_;  // the suite read now ("FEDS")
+    std::string afterIntro_; // the suite that follows the opening piece
+    std::array<std::string, 8> suiteSlots_;
+    std::vector<SuiteEffect> suiteEffects_;
+    bool songLoaded_ = false;
+    bool sounding_ = false;  // a song plays (and will end)
+    bool resumeSong_ = false; // play wantSong_ once the suite is read
+    int wantSong_ = -1;
+    int backgroundSong_ = -1;
+    std::function<void(Platform&)> previousWait_;
     int askText();
 
     std::shared_ptr<const Bitmap> scaledPicture(const std::string& name, int scale);

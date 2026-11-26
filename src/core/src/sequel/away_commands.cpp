@@ -30,7 +30,6 @@ constexpr std::uint16_t kNotHandled = 0xC21F;
 constexpr std::uint16_t kQuiet = 0xC21E;
 constexpr std::uint16_t kResultA = 0xC222;
 constexpr std::uint16_t kResultB = 0xC224;
-constexpr std::uint16_t kSongA = 0x1A62;
 constexpr std::uint16_t kEventBytes = 0xC218;
 constexpr std::uint8_t kWait = 0xFE; // "wait until done" in place of a code
 
@@ -202,11 +201,11 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         const int hi = c.sarg(1);
         return static_cast<std::uint32_t>(hi < lo ? lo : lo + static_cast<int>(rng_() % static_cast<unsigned>(hi - lo + 1)));
     }
-    case 0x10: // a song
-        m_.set8(kSongA, static_cast<std::uint8_t>(c.arg(1)));
-        m_.set8(static_cast<std::uint16_t>(kSongA + 1), static_cast<std::uint8_t>(c.arg(2)));
+    case 0x10: // a sound effect: (number, volume, pan)
+        soundEffect(c.sarg(0), c.arg(1) & 0xFF, c.arg(2) & 0xFF);
         return 0;
-    case 0x11: // music
+    case 0x11: // music: (the song now, the one to go on with)
+        music(c.sarg(0), c.sarg(1));
         return 0;
     case 0x12: { // the team beams up
         m_.set16(kResultA, c.arg(0));

@@ -31,9 +31,19 @@ For the second game (`judgment`) the part after the header is:
 
 | Part | Meaning |
 |------|---------|
-| byte | the layout's number, now 1 |
+| byte | the layout's number, now 3 (1 had no ships and no music, 2 no music) |
 | byte | where: 0 on the ship, 1 on a mission |
 | block | the whole data segment of the original program, 0x10000 bytes: the scripts keep everything they know there |
+| ships | the things in space (below) |
+| 32-bit | the song asked for, or -1 |
+| 32-bit | the background song, or -1 |
+
+The things in space are a byte for each of space's places: 0 when it is
+empty, otherwise its kind (2 a ship, 1 a still object) followed by its name
+(text), where it is (three 32-bit numbers), which way it faces (nine 16-bit
+numbers) and, for a ship, each part and each shield (whether it works, a
+byte, then its best and its strength now, 32-bit each), the speed it wants (32-bit), whether its shields are
+up and its weapons armed (a byte each) and what it is doing (byte).
 
 On a mission the room follows: the room's number (32-bit); three texts, the
 names of the room picture, the depth map and the walking map shown now (a

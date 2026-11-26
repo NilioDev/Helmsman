@@ -1204,18 +1204,7 @@ void Game::playEffect(const std::string& name) {
     if (!soundOn_) {
         return;
     }
-    const std::string tag = upperName(name);
-    std::optional<PlainSound> sound;
-    if (voices_ && voices_->has(tag)) {
-        try {
-            sound = voices_->sound(tag);
-        } catch (const FormatError&) {
-        }
-    }
-    if (!sound) {
-        sound = assets_.sound(tag);
-    }
-    if (sound) {
+    if (auto sound = findSound(name)) {
         p_.queueSound(SoundChannel::Effect, sound->rate, std::move(sound->samples), true);
     }
 }
@@ -1523,6 +1512,7 @@ void Game::awayMission() {
     m_.set16(ds::kSpawn, 0xFFFF);
     m_.set16(ds::kRoom, 0);
     away_ = true;
+    loadSuite(episodeName_, 'g');
     fade_ = fadeTarget_ = 100;
     fadeColour_ = Colour{};
     busy_ = false;

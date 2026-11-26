@@ -901,8 +901,12 @@ Machine::Flow Game::spaceCommand(ScriptCall& c, std::uint32_t& result) {
     case 0x2C:
         result = shipCommand(c);
         return Machine::Flow::Go;
-    case cmd::kMusic:
-    case cmd::kSong:
+    case cmd::kSoundEffect: // a sound effect: (number, volume, pan)
+        soundEffect(c.sarg(0), c.arg(1) & 0xFF, c.arg(2) & 0xFF);
+        return Machine::Flow::Go;
+    case cmd::kMusic: // music: (the song now, the one to go on with)
+        music(c.sarg(0), c.sarg(1));
+        return Machine::Flow::Go;
     case cmd::kOpenBank:
     case cmd::kCloseBanks:
         return Machine::Flow::Go;
@@ -1000,6 +1004,7 @@ void Game::bridgeButton(int id) {
 
 void Game::bridge() {
     loadBridge();
+    loadSuite(episodeName_, 's');
     leaveBridge_ = false;
     p_.pointerShown = true;
     while (!p_.quit && !leaveBridge_) {
@@ -1008,6 +1013,7 @@ void Game::bridge() {
             awayPending_ = false;
             awayMission();
             loadBridge();
+            loadSuite(episodeName_, 's');
             ticksDue_ = 0;
             p_.pointerShown = true;
             bridgePointer();
@@ -1100,6 +1106,9 @@ void Game::bridge() {
 // player likes.
 void Game::startMenu() {
     loadBridge();
+    // The title's theme (its first song is only a short call).
+    loadSuite("title", 0);
+    music(1, 1);
     p_.pointerShown = true;
     while (!p_.quit && anySaves()) {
         const int choice =

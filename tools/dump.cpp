@@ -793,10 +793,13 @@ int main(int argc, char** argv) {
                 std::printf("script ended at frame %d\n", frame);
             }
         } else if (what == "music" && argc >= 7) {
-            // Plays a song of a music file into a WAV file.
-            const auto archive = Archive::open(*source, "DATA");
+            // Plays a song of a music file into a WAV file (of the DATA
+            // archive, or of the archive named after the file).
+            const auto data = Archive::open(*source, "DATA");
+            const auto archive = Archive::open(*source, archiveArg(7));
             audio::AdLibMusic music(44100);
-            music.setInstruments(archive.need("GTL.AD"));
+            auto library = data.load("GTL.AD");
+            music.setInstruments(library ? *library : data.need("TREK2.AD"));
             music.setSongs(audio::readXmidi(archive.need(argv[3])));
             music.play(std::stoi(argv[4]));
             const auto frames = static_cast<std::size_t>(std::stod(argv[5]) * 44100);

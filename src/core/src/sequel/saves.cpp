@@ -16,7 +16,7 @@ namespace helmsman::sequel::detail {
 namespace {
 
 constexpr const char* kGame = "judgment";
-constexpr std::uint8_t kFormat = 2; // 1: without the ships in space
+constexpr std::uint8_t kFormat = 3; // 1: without the ships in space, 2: without the music
 constexpr std::uint8_t kOnBridge = 0;
 constexpr std::uint8_t kOnMission = 1;
 constexpr std::size_t kSegment = 0x10000;
@@ -48,6 +48,7 @@ std::vector<std::uint8_t> Game::savePayload() {
     w.bytes(std::span<const std::uint8_t>(ds, kSegment));
     setupSpace();
     space_->save(w);
+    saveMusic(w);
     if (away_) {
         writeAway(w);
     }
@@ -198,7 +199,7 @@ void Game::readAway(SaveReader& r) {
 void Game::restorePayload(std::span<const std::uint8_t> payload) {
     SaveReader r(payload);
     const auto format = r.u8();
-    if (format != kFormat && format != 1) {
+    if (format < 1 || format > kFormat) {
         throw FormatError("a saved game of another version");
     }
     const auto where = r.u8();
@@ -215,6 +216,9 @@ void Game::restorePayload(std::span<const std::uint8_t> payload) {
     resetSpace(false);
     if (format >= 2) {
         space_->restore(r);
+    }
+    if (format >= 3) {
+        restoreMusic(r);
     }
     applyView();
     resumeAway_.reset();
@@ -318,7 +322,7 @@ bool Game::optionsMenu() {
         break;
     case 4:
     case 5:
-        musicOn_ = !musicOn_;
+        setMusicOn(!musicOn_);
         break;
     case 6:
         if (menuBox("Quit", {"#GENER018#Quit the game.", "Cancel."}) == 0) {
