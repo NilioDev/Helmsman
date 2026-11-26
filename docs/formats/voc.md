@@ -18,6 +18,7 @@ The blocks Helmsman uses:
 | 5 | text, ending in a zero byte; in the voices it holds the mouth shapes for the speaking face |
 | 6 | a repeat starts: a 16-bit count of extra plays, 0xFFFF for "until stopped" |
 | 7 | the repeat ends |
+| 9 | sound with the rate in full: a 32-bit rate, bits per sample, channels, a 16-bit codec and four spare bytes, then the samples (Helmsman takes 8-bit mono, codec 0) |
 
 Other blocks are skipped. The sample rate for a rate byte `b` is
 `1000000 / (256 - b)`.

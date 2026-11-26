@@ -91,6 +91,22 @@ VocSound Voc::parse(std::span<const std::uint8_t> bytes) {
             sound.parts.push_back(std::move(part));
             break;
         }
+        case 9: { // sound with its rate in full: rate, bits, channels, codec, four spare bytes
+            const std::uint32_t rate = block.u32();
+            const std::uint8_t bits = block.u8();
+            const std::uint8_t channels = block.u8();
+            const std::uint16_t codec = block.u16();
+            block.skip(4);
+            if (bits != 8 || channels != 1 || codec != 0 || rate < 1000 || rate > 100000) {
+                throw FormatError("voc: unsupported sound layout");
+            }
+            const auto data = block.bytes(block.remaining());
+            VocPart part;
+            part.rate = lastRate = static_cast<int>(rate);
+            part.samples.assign(data.begin(), data.end());
+            sound.parts.push_back(std::move(part));
+            break;
+        }
         case 2: { // more sound at the last rate
             if (lastRate == 0) {
                 throw FormatError("voc: continuation before sound");

@@ -28,6 +28,7 @@
 #include "helmsman/engine/fiber.hpp"
 #include "helmsman/data/archive.hpp"
 #include "helmsman/data/movie.hpp"
+#include "helmsman/data/sound_bank.hpp"
 #include "helmsman/data/animation.hpp"
 #include "helmsman/data/reader.hpp"
 #include "helmsman/gfx/bitmap.hpp"
@@ -189,6 +190,25 @@ int main(int argc, char** argv) {
                         anim.framesPerSecond());
             if (argc >= 6) {
                 writePng(argv[5], sheet, anim.palette());
+            }
+        } else if (what == "bank" && argc >= 4) {
+            // A sound bank: bank FILE.VCC lists it; bank FILE.VCC NAME OUT.raw
+            // writes one sound as unsigned 8-bit samples.
+            SoundBank bank(*source, argv[3]);
+            if (argc < 6) {
+                for (const auto& name : bank.names()) {
+                    std::printf("%s\n", name.c_str());
+                }
+            } else {
+                const auto sound = bank.sound(argv[4]);
+                if (!sound) {
+                    std::fprintf(stderr, "no such sound\n");
+                    return 1;
+                }
+                std::ofstream out(argv[5], std::ios::binary);
+                out.write(reinterpret_cast<const char*>(sound->samples.data()),
+                          static_cast<std::streamsize>(sound->samples.size()));
+                std::printf("%zu samples at %d\n", sound->samples.size(), sound->rate);
             }
         } else if (what == "raw" && argc >= 5) {
             auto data = source->read(argv[3]);
