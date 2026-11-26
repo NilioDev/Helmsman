@@ -47,7 +47,7 @@ bool Sprite::hit(int sx, int sy) const {
 }
 
 void Scene::setDepths(std::span<const std::uint8_t> bytes) {
-    std::fill(depths.begin(), depths.end(), 0);
+    std::fill(depths.begin(), depths.end(), std::uint8_t{0});
     const std::size_t n = std::min(bytes.size(), depths.size() / 2);
     for (std::size_t i = 0; i < n; ++i) {
         depths[2 * i] = static_cast<std::uint8_t>(bytes[i] >> 4);

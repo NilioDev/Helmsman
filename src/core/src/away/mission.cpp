@@ -115,7 +115,7 @@ void Mission::setUpRoom(int room) {
     if (const auto pri = archive.load(base + ".PRI")) {
         scene_.setDepths(*pri);
     } else {
-        std::fill(scene_.depths.begin(), scene_.depths.end(), 0);
+        std::fill(scene_.depths.begin(), scene_.depths.end(), std::uint8_t{0});
     }
     session_.platform.palette = Palette::fromBytes(archive.need("PALETTE.PAL"));
     if (const auto lut = archive.load("PALETTE.LUT"); lut && lut->size() >= 256) {

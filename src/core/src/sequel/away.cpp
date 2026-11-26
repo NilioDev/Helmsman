@@ -1101,7 +1101,7 @@ void Game::loadBackdrop(const std::string& name) {
     if (const auto common = file("PALETTE.PAL"); common && common->size() >= 768) {
         std::copy_n(common->begin(), 768, colours.begin());
     }
-    std::fill_n(colours.begin(), 0x1E, 0);
+    std::fill_n(colours.begin(), 0x1E, std::uint8_t{0});
     for (const auto& [from, to] : {std::pair{0x1E, 0x180}, std::pair{0x270, 0x294}, std::pair{0x2A0, 0x2E2}}) {
         std::copy(bgd->begin() + from, bgd->begin() + to, colours.begin() + from);
     }
@@ -1115,7 +1115,7 @@ void Game::loadDepths(const std::string& name) {
     if (const auto pri = file(name + ".PRI")) {
         scene_.setDepths(*pri);
     } else {
-        std::fill(scene_.depths.begin(), scene_.depths.end(), 0);
+        std::fill(scene_.depths.begin(), scene_.depths.end(), std::uint8_t{0});
     }
 }
 

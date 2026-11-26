@@ -33,7 +33,7 @@ std::vector<std::uint8_t> packedProgram() {
     }
     const std::uint8_t commands[] = {0x10, 0x00, 0xB3, 'Z', 0x10, 0x00, 0xB0};
     std::copy(std::begin(commands), std::end(commands), image + 16);
-    std::fill(image + 23, image + 32, 0xFF);
+    std::fill(image + 23, image + 32, std::uint8_t{0xFF});
     put16(exe, 32 + 32 + 12, 3);     // three paragraphs unpacked
     put16(exe, 32 + 32 + 14, 0x4252); // "RB"
     return exe;

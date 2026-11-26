@@ -130,7 +130,7 @@ void Machine::loadSpaceScript(std::span<const std::uint8_t> file) {
         throw FormatError("not a space script");
     }
     std::uint8_t* base = cpu.memory() + X86::linear(kSpace, 0);
-    std::fill_n(base, 0x10000, 0);
+    std::fill_n(base, 0x10000, std::uint8_t{0});
     std::copy(file.begin(), file.end(), base);
     // The far pointer the code calls the game through, and the scripts'
     // block.
@@ -192,7 +192,7 @@ void Machine::loadRoomCode(std::uint16_t seg, std::span<const std::uint8_t> file
         throw FormatError(room ? "not a room's code" : "not a mission's code");
     }
     std::uint8_t* base = cpu.memory() + X86::linear(seg, 0);
-    std::fill_n(base, 0x10000, 0);
+    std::fill_n(base, 0x10000, std::uint8_t{0});
     std::copy(file.begin(), file.end(), base);
     cpu.write16(seg, 0, kRoomEntry);
     cpu.write16(seg, 2, X86::kHostSegment);

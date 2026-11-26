@@ -99,7 +99,7 @@ std::span<const std::uint8_t> Animation::record(int index) const {
 void Animation::next() {
     if (frame_ < 0 || (frame_ + 1 >= frames_ && !loopRecord_)) {
         frame_ = 0;
-        std::fill(picture_.begin(), picture_.end(), 0);
+        std::fill(picture_.begin(), picture_.end(), std::uint8_t{0});
         draw(record(0));
     } else if (frame_ + 1 >= frames_) {
         frame_ = 0;
