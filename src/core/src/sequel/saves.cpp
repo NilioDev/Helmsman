@@ -68,7 +68,7 @@ void Game::writeAway(SaveWriter& w) const {
     w.u32(roomTicks_);
     w.s32(area_);
     w.s32(exitArmed_);
-    w.u8(busy_ ? 1 : 0);
+    w.u8(busy() ? 1 : 0);
     w.u32(static_cast<std::uint32_t>(queue_.size()));
     for (const auto& e : queue_) {
         for (const auto b : e) {
@@ -132,7 +132,7 @@ void Game::readAway(SaveReader& r) {
     roomTicks_ = r.u32();
     area_ = r.s32();
     exitArmed_ = r.s32();
-    busy_ = r.u8() != 0;
+    setBusy(r.u8() != 0);
     const auto queued = r.u32();
     if (queued > kMaxQueue) {
         throw FormatError("a saved game with too many events waiting");

@@ -58,7 +58,8 @@ to the room in the table above.
 Opening a room queues a tick (0) and brings the crew in: each walks from
 their way in to their place, or beams in when the mission begins. Kirk's
 arrival gives "done" with code 0xFF, and until then (`DS:C217`) the player
-gives no orders.
+gives no orders. Scripts set and clear that byte themselves too, to keep the
+player's hands off while they walk someone somewhere.
 
 Some rooms start a scene at once, with the crew still walking in, and give
 Kirk an animation of their own. That would swallow his arrival, and the
@@ -132,5 +133,6 @@ goes on from the newest, until the mission is over or MOST states were
 found. It prints the orders that led to the end, to a lost game, to beaming
 up early or to a script that never lets go. ORDERS, as printed, are given
 first; `pick:N` there answers the next choice, button or typed word with
-answer N. With `HELMSMAN_TRACE` it also prints every state and the values
+answer N (counted from 0), and waits a little for a question that comes
+late. `wait` lets the room's clock run for 200 ticks, so its timers go off. With `HELMSMAN_TRACE` it also prints every state and the values
 that tell it apart.

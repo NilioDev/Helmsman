@@ -552,7 +552,10 @@ private:
     int exitArmed_ = -1;
     int action_ = 1; // 1 walk 2 use 3 get 4 look 5 talk
     int subject_ = -1; // what is being used
-    bool busy_ = false; // the crew is beaming in or the like: no orders
+    // The crew is beaming in, or a script has taken over: no orders. The
+    // flag lives where the scripts keep it, so they can set it too.
+    bool busy() const { return m_.u8(0xC217) != 0; }
+    void setBusy(bool on) { m_.set8(0xC217, on ? 1 : 0); }
     bool awayPending_ = false;
     std::shared_ptr<const Bitmap> cursor_;
     std::string cursorName_;

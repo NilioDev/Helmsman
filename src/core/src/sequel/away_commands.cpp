@@ -51,6 +51,11 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
     if (p_.devTrace) {
         std::fprintf(stderr, "  room %02x (%d %d %d %d %d)\n", c.function, c.sarg(0), c.sarg(1), c.sarg(2), c.sarg(3), c.sarg(4));
     }
+    // A script that takes Kirk over before he has come in lets his
+    // arrival through.
+    if (c.function == 0x00 || c.function == 0x01 || c.function == 0x08 || c.function == 0x2D) {
+        keepArrival(who(0));
+    }
     switch (c.function) {
     case 0x00: // stand
         if (valid(who(0))) {
@@ -214,7 +219,7 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
     case 0x12: { // the team beams up
         m_.set16(kResultA, c.arg(0));
         m_.set16(kResultB, c.arg(1));
-        busy_ = true;
+        setBusy(true);
         std::vector<int> team;
         for (int i = 0; i < 32; ++i) {
             if ((rec8(i, rec::kTeam) & 1) != 0 && bodies_[i].used) {

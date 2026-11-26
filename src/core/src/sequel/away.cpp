@@ -67,7 +67,6 @@ namespace spot {
 constexpr std::uint16_t kItems = 0x0F5A;    // 10 bytes an item: have, name
 constexpr std::uint16_t kHandlers = 0x526A; // {kind, table, priority} x 7
 constexpr std::uint16_t kHandlerCount = 0x5294;
-constexpr std::uint16_t kBusy = 0xC217;
 constexpr std::uint16_t kMouseX = 0xC212;
 constexpr std::uint16_t kMouseY = 0xC214;
 constexpr std::uint16_t kQuiet = 0xC21E;
@@ -300,7 +299,6 @@ int Game::startAnim(int who, std::string name, int x, int y, int scale) {
     if (who < 0 || who >= 32) {
         return -1;
     }
-    keepArrival(who);
     const auto r = record(who);
     if (x == -1) {
         x = m_.s16(static_cast<std::uint16_t>(r + rec::kX));
@@ -361,7 +359,7 @@ int Game::startAnim(int who, std::string name, int x, int y, int scale) {
 // starts as the room opens), that event would never come and the player
 // could give no orders again: it comes at once instead.
 void Game::keepArrival(int who) {
-    if (who == kKirk && busy_ && rec8(who, rec::kCode) == kArrived) {
+    if (who == kKirk && busy() && rec8(who, rec::kCode) == kArrived) {
         setRec8(who, rec::kCode, 0);
         post(ev::kDone, kArrived);
     }
@@ -437,7 +435,6 @@ bool Game::walk(int who, int fx, int fy, int tx, int ty, int code) {
     if (fy == -1) {
         fy = m_.s16(static_cast<std::uint16_t>(r + rec::kY));
     }
-    keepArrival(who);
     Body& b = bodies_[who];
     if (rec8(who, rec::kLetter) == 0) {
         // Only the crew has walking pictures: others are put there.
@@ -552,7 +549,7 @@ void Game::checkAreas(int x, int y) {
     } else if (inArea != -1) {
         post(ev::kInArea, static_cast<std::uint8_t>(inArea));
     }
-    if (busy_) {
+    if (busy()) {
         return;
     }
     int exit = -1;
@@ -904,7 +901,7 @@ bool Game::runList(int list, const std::uint8_t e[4], bool run) {
                 } else {
                     m_.set8(spot::kNotHandled, 0);
                     if (p_.devTrace) {
-                        std::fprintf(stderr, " handler %02x %02x %02x %02x list %d kind %d\n", e[0], e[1], e[2], e[3], list, kind);
+                        std::fprintf(stderr, " handler %02x %02x %02x %02x at %04x list %d kind %d\n", h[0], h[1], h[2], h[3], at, list, kind);
                     }
                     const auto savedSeg = currentSeg_;
                     const int savedKind = currentKind_;
@@ -977,13 +974,12 @@ void Game::dispatchQueued() {
             std::fprintf(stderr, "[%llu] event %02x %02x %02x\n", static_cast<unsigned long long>(awayTicks_), e[0], e[1], e[2]);
         }
         if (e[0] == ev::kDone && e[1] == kArrived) {
-            busy_ = false;
-            m_.set8(spot::kBusy, 0);
+            setBusy(false);
         }
         if (sendEvent(false, false, e.data())) {
             continue;
         }
-        if (e[0] == ev::kWalk && !busy_) {
+        if (e[0] == ev::kWalk && !busy()) {
             walk(kKirk, -1, -1, p_.mouseX, p_.mouseY, 0);
         } else if (e[0] == ev::kExit) {
             const int to = s16(m_.word(Machine::kRoom, static_cast<std::uint16_t>(room::kExitRooms + 2 * e[1])));
@@ -1188,8 +1184,7 @@ void Game::enterRoom(int spawn) {
             walk(who, fx, fy, tx, ty, who == kKirk ? kArrived : 0);
         }
         if (who == kKirk) {
-            busy_ = true;
-            m_.set8(spot::kBusy, 1);
+            setBusy(true);
         }
     }
     if (spawn == -1) {
@@ -1417,11 +1412,11 @@ int Game::inventory(bool forUse) {
 }
 
 void Game::awayInput() {
-    const int over = busy_ ? -1 : thingAt(p_.mouseX, p_.mouseY);
-    setCursor(busy_ ? "wait" : cursorFor(action_, over >= 0 && action_ != 1));
+    const int over = busy() ? -1 : thingAt(p_.mouseX, p_.mouseY);
+    setCursor(busy() ? "wait" : cursorFor(action_, over >= 0 && action_ != 1));
     const auto clicks = p_.takeClicks();
     if (p_.devTrace && clicks != 0) {
-        std::fprintf(stderr, "click %d at %d,%d over %d action %d busy %d\n", clicks, p_.mouseX, p_.mouseY, over, action_, busy_ ? 1 : 0);
+        std::fprintf(stderr, "click %d at %d,%d over %d action %d busy %d\n", clicks, p_.mouseX, p_.mouseY, over, action_, busy() ? 1 : 0);
     }
     bool menu = (clicks & 2) != 0;
     bool inv = false;
@@ -1448,7 +1443,7 @@ void Game::awayInput() {
         }
     }
     p_.keys.clear();
-    if (busy_) {
+    if (busy()) {
         return;
     }
     if (options) {
@@ -1535,7 +1530,7 @@ void Game::awayMission() {
     loadSuite(episodeName_, 'g');
     fade_ = fadeTarget_ = 100;
     fadeColour_ = Colour{};
-    busy_ = false;
+    setBusy(false);
     p_.pointerShown = true;
     bool first = true;
     struct Back {

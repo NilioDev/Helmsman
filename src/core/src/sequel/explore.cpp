@@ -117,6 +117,10 @@ struct Explorer {
     int from = -1;     // the node the order under way was given in
     std::string doing; // and the order
     int settle = 0;
+    int waiting = 0;          // the room's ticks still to let pass ("wait")
+    long long lastTick = -1;
+    int waitRoom = -1;
+    int pickWaits = 0;        // waits for the question a replayed answer is for
     int stuck = 0;
     int frames = 0;        // since the order under way was given
     int lastFunction = -1; // the room function the scripts called last
@@ -201,6 +205,7 @@ int Game::exploreChoice(int count) {
     if (!x.replay.empty() && x.replay.front().type == kPick) {
         const int a = x.replay.front().a;
         x.replay.pop_front();
+        x.pickWaits = 0;
         return std::clamp(a, 0, std::max(0, count - 1));
     }
     if (count <= 1) {
@@ -251,6 +256,7 @@ void Game::exploreJump(const char* why) {
     if (const int i = bestNode(x); i >= 0) {
         x.from = -1;
         x.settle = 0;
+        x.waiting = 0;
         x.stuck = 0;
         x.frames = 0;
         x.expect = i;
@@ -271,8 +277,11 @@ void Game::exploreEnd(int how) {
         p_.quit = true;
         return;
     }
-    // Beamed up before the end: not the way through.
-    exploreJump("beamed up");
+    // Beamed up: the end of some missions, too early in others; the two
+    // values the bridge reads tell.
+    char why[64];
+    std::snprintf(why, sizeof why, "beamed up (%d %d)", m_.s16(0xC222), m_.s16(0xC224));
+    exploreJump(why);
 }
 
 // Each frame shown: a script that keeps the game waiting for too long (one
@@ -294,12 +303,25 @@ void Game::exploreCalled(int function) { explore_->lastFunction = function; }
 void Game::exploreIdle() {
     Explorer& x = *explore_;
     const Body& kirk = bodies_[0];
-    const bool idle = !busy_ && queue_.empty() && !kirk.walking;
+    if (x.waiting > 0 && roomNumber_ != x.waitRoom) {
+        x.waiting = 0; // a wait ends in another room
+    }
+    if (x.waiting > 0) {
+        // Waiting lets the room's clock run: its timers and ticks.
+        if (static_cast<long long>(roomTicks_) != x.lastTick) {
+            x.lastTick = static_cast<long long>(roomTicks_);
+            --x.waiting;
+        }
+        x.settle = 0;
+        x.stuck = 0;
+        return;
+    }
+    const bool idle = !busy() && queue_.empty() && !kirk.walking;
     if (!idle) {
         x.settle = 0;
         if (++x.stuck > kStuckFrames) {
             if (p_.devTrace) {
-                std::printf("  stuck: busy %d, %zu events, walking %d at %d,%d\n", busy_ ? 1 : 0, queue_.size(),
+                std::printf("  stuck: busy %d, %zu events, walking %d at %d,%d\n", busy() ? 1 : 0, queue_.size(),
                             kirk.walking ? 1 : 0, kirk.x, kirk.y);
             }
             exploreJump("stuck");
@@ -439,6 +461,11 @@ void Game::exploreIdle() {
         x.seen.emplace(key, node);
         if (p_.devTrace) {
             std::printf("state %d room %d, %zu orders: %s\n", node, n.room, n.actions.size(), n.path.c_str());
+            std::printf("  can:");
+            for (const auto& a : n.actions) {
+                std::printf(" %s", actionText(a.type, a.a, a.b, a.variant).c_str());
+            }
+            std::printf("\n");
         }
         x.nodes.push_back(std::move(n));
         if (static_cast<int>(x.nodes.size()) % 100 == 0) {
@@ -472,6 +499,17 @@ void Game::exploreIdle() {
             exploreJump(nullptr);
         }
     }
+    // An answer given ahead waits a while for its question (a room may ask
+    // only after some ticks); then it is dropped.
+    if (!x.replay.empty() && x.replay.front().type == kPick && x.pickWaits < 8) {
+        ++x.pickWaits;
+        x.choices = 0;
+        x.waiting = 25;
+        x.waitRoom = roomNumber_;
+        x.lastTick = static_cast<long long>(roomTicks_);
+        return;
+    }
+    x.pickWaits = 0;
     while (!x.replay.empty() && x.replay.front().type == kPick) {
         x.replay.pop_front();
     }
@@ -519,7 +557,9 @@ void Game::exploreIdle() {
         break;
     }
     case kWait:
-        waitAwayTicks(200);
+        x.waiting = 200;
+        x.waitRoom = roomNumber_;
+        x.lastTick = static_cast<long long>(roomTicks_);
         break;
     default:
         m_.set16(0xC212, static_cast<std::uint16_t>(kirk.x));
