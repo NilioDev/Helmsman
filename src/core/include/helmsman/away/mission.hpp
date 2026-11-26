@@ -86,6 +86,7 @@ struct MissionResult {
     int b = 0;
     bool quit = false;    // the player left the game
     int loadSave = -1;    // the player chose to load this saved game
+    bool restart = false; // the game was lost and the player starts again
 };
 
 class Mission {

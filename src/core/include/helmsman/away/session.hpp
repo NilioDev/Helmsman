@@ -79,6 +79,10 @@ public:
     // What lasts between rooms and missions, for saved games.
     void save(SaveWriter& w) const;
     void restore(SaveReader& r);
+    // When the whole game is played (not one mission alone): what the
+    // bridge keeps, written into saves made on a planet, and saved games
+    // are loaded by the game rather than by the mission.
+    std::function<void(SaveWriter&)> saveVoyage;
 
     // A line of a text file in the archive (lines end in a zero byte).
     std::string textLine(std::string_view file, int index);

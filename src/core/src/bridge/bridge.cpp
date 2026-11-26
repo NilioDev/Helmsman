@@ -3,6 +3,7 @@
 
 #include "bridge/missions.hpp"
 
+#include "helmsman/away/menus.hpp"
 #include "helmsman/data/reader.hpp"
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/gfx/palette.hpp"
@@ -995,6 +996,15 @@ void Bridge::defaultAction(int action) {
         const int choice = away::buttonMenu(u, "options", 0x3C, 0x41, hidden);
         away::setPointer(session_, "pushbtn");
         switch (choice) {
+        case 0: saveGame(); break;
+        case 1: {
+            away::Ui q = ui();
+            const int number = away::loadGameMenu(q);
+            if (number >= 0) {
+                result_ = BridgeResult{Leave::LoadSave, number};
+            }
+            break;
+        }
         case 2: session_.setMusicOn(true); break;
         case 3: session_.setMusicOn(false); break;
         case 4: session_.effectsOn = true; break;
@@ -1182,6 +1192,50 @@ void Bridge::starMap() {
     }
 }
 
+void Bridge::saveState(SaveWriter& w) const { space_.save(w); }
+
+void Bridge::restoreState(SaveReader& r) {
+    space_.restore(r);
+    space_.watchFromBridge();
+    clearEvents();
+}
+
+void Bridge::saveGame() {
+    SaveWriter w;
+    w.text("bridge");
+    session_.save(w);
+    w.u8(1);
+    voyage_.save(w);
+    saveState(w);
+    away::Ui u = ui();
+    away::saveGameMenu(u, missionName(voyage_.mission), w.data);
+}
+
+void Bridge::shipLost() {
+    // Seen from outside as it breaks apart, then the end.
+    Platform& p = session_.platform;
+    setFullView(true);
+    const space::Object& ship = space_.player();
+    space_.watchFrom(ship.pos + space::applyTransposed(ship.axes, space::Vec{0, 200, -1500}));
+    p.pointerShown = false;
+    for (int i = 0; i < 60 && !p.quit; ++i) {
+        session_.waitTick();
+        space_.tick();
+        drawFrame();
+    }
+    space_.watchFromBridge();
+    p.pointerShown = true;
+    setFullView(false);
+    away::Ui u = ui();
+    away::textBox(u, {"", "#GENE\\SPACE000#The Enterprise has been destroyed!"}, 0x14, 0x14, 0xB0);
+    int load = -1;
+    switch (away::gameOverMenu(u, load)) {
+    case away::GameOverChoice::Load: result_ = BridgeResult{Leave::LoadSave, load}; break;
+    case away::GameOverChoice::Restart: result_ = BridgeResult{Leave::Restart, -1}; break;
+    case away::GameOverChoice::Quit: result_ = BridgeResult{Leave::Quit, -1}; break;
+    }
+}
+
 BridgeResult Bridge::run() {
     Platform& p = session_.platform;
     result_.reset();
@@ -1203,6 +1257,9 @@ BridgeResult Bridge::run() {
             const Event e = events_.front();
             events_.pop_front();
             dispatch(e);
+        }
+        if (!result_ && space_.playerDestroyed()) {
+            shipLost();
         }
         drawFrame();
     }

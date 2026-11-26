@@ -83,6 +83,7 @@ enum class Leave {
     BeamDown,
     GameOver,
     Ending, // the last mission is done
+    Restart, // the game was lost and the player starts again
 };
 
 struct BridgeResult {
@@ -167,6 +168,11 @@ public:
     void setControl(bool on);
     void setFullView(bool on);
     void beamDown() { result_ = BridgeResult{Leave::BeamDown, -1}; }
+    // What the bridge keeps for a saved game (the ships around it); the
+    // voyage is saved apart.
+    void saveState(SaveWriter& w) const;
+    void restoreState(SaveReader& r);
+
     // The last mission is over: on to the closing titles.
     void endGame() { result_ = BridgeResult{Leave::Ending, -1}; }
 
@@ -208,6 +214,8 @@ private:
     void setZoom(int zoom);
     void report(int event, int what, bool player);
     void starMap();
+    void saveGame();
+    void shipLost();
     void transporterMenu();
     away::Ui ui();
 

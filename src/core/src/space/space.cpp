@@ -184,6 +184,7 @@ void Space::setPlayer(const std::string& cls) {
     p = Object{};
     p.kind = Kind::Ship;
     p.cls = shipClass(cls);
+    p.className = cls;
     p.type = p.cls.picture;
     p.size = p.cls.size;
     p.scale = p.cls.scale;
@@ -201,6 +202,7 @@ int Space::addShip(const std::string& cls) {
         s = Object{};
         s.kind = Kind::Ship;
         s.cls = shipClass(cls);
+        s.className = cls;
         s.type = s.cls.picture;
         s.size = s.cls.size;
         s.scale = s.cls.scale;
@@ -237,6 +239,117 @@ int Space::addStill(const std::string& name, Vec where) {
 }
 
 void Space::remove(int index) { object(index) = Object{}; }
+
+namespace {
+
+void savePart(SaveWriter& w, const Part& p) {
+    w.u8(p.on ? 1 : 0);
+    w.s32(p.best);
+    w.s32(p.now);
+}
+
+void restorePart(SaveReader& r, Part& p) {
+    p.on = r.u8() != 0;
+    p.best = r.s32();
+    p.now = r.s32();
+}
+
+void saveVec(SaveWriter& w, const Vec& v) {
+    w.s32(v.x);
+    w.s32(v.y);
+    w.s32(v.z);
+}
+
+Vec restoreVec(SaveReader& r) {
+    Vec v;
+    v.x = r.s32();
+    v.y = r.s32();
+    v.z = r.s32();
+    return v;
+}
+
+} // namespace
+
+void Space::save(SaveWriter& w) const {
+    for (int i = 0; i < kObjects; ++i) {
+        const Object& o = object(i);
+        const bool kept = (o.kind == Kind::Ship && !o.destroyed) || o.kind == Kind::Still;
+        if (!kept) {
+            w.u8(0);
+            continue;
+        }
+        w.u8(static_cast<std::uint8_t>(o.kind));
+        w.text(o.kind == Kind::Ship ? o.className : o.stillName);
+        saveVec(w, o.pos);
+        for (const std::int16_t m : o.axes.m) {
+            w.u16(static_cast<std::uint16_t>(m));
+        }
+        if (o.kind != Kind::Ship) {
+            continue;
+        }
+        for (const Part& p : o.cls.parts) {
+            savePart(w, p);
+        }
+        for (const Part& p : o.cls.shields) {
+            savePart(w, p);
+        }
+        w.s32(o.wantSpeed);
+        w.u8(o.shieldsUp ? 1 : 0);
+        w.u8(o.weaponsArmed ? 1 : 0);
+        w.u8(static_cast<std::uint8_t>(o.behaviour));
+    }
+}
+
+void Space::restore(SaveReader& r) {
+    for (int i = 0; i < kObjects; ++i) {
+        Object& o = object(i);
+        const int kind = r.u8();
+        o = Object{};
+        if (kind == 0) {
+            continue;
+        }
+        if (kind != static_cast<int>(Kind::Ship) && kind != static_cast<int>(Kind::Still)) {
+            throw FormatError("a saved object of an unknown kind");
+        }
+        const std::string name = r.text();
+        o.kind = static_cast<Kind>(kind);
+        if (o.kind == Kind::Ship) {
+            if (name.empty() || name.size() > 12) {
+                throw FormatError("a saved ship without a proper class");
+            }
+            o.cls = shipClass(name);
+            o.className = name;
+            o.type = o.cls.picture;
+            o.size = o.cls.size;
+            o.scale = o.cls.scale;
+        } else {
+            o.stillName = name;
+            o.size = 150;
+            o.scale = 3;
+        }
+        o.pos = restoreVec(r);
+        for (std::int16_t& m : o.axes.m) {
+            m = static_cast<std::int16_t>(r.u16());
+        }
+        if (o.kind != Kind::Ship) {
+            continue;
+        }
+        for (Part& p : o.cls.parts) {
+            restorePart(r, p);
+        }
+        for (Part& p : o.cls.shields) {
+            restorePart(r, p);
+        }
+        o.wantSpeed = r.s32();
+        o.shieldsUp = r.u8() != 0;
+        o.weaponsArmed = r.u8() != 0;
+        o.behaviour = r.u8();
+    }
+    if (player().kind != Kind::Ship) {
+        throw FormatError("a saved game without the player's ship");
+    }
+    playerDead_ = false;
+}
 
 bool Space::enemiesLeft() const {
     for (int i = kFirstShip; i < kFirstShip + kShips; ++i) {

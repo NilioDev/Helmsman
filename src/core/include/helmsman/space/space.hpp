@@ -8,6 +8,7 @@
 #pragma once
 
 #include "helmsman/data/archive.hpp"
+#include "helmsman/engine/savegame.hpp"
 #include "helmsman/gfx/bitmap.hpp"
 #include "helmsman/gfx/rect.hpp"
 #include "helmsman/gfx/surface.hpp"
@@ -103,6 +104,7 @@ struct Object {
     Mat axes = Mat::identity();
     Vec velocity;
     std::string stillName; // the picture of a Still
+    std::string className; // the description file of a Ship ("KLINGON")
 
     // A ship's state.
     ShipClass cls;
@@ -224,6 +226,11 @@ public:
     void watchFromBridge() { outside_ = false; }
     // Forgets the stars, so that new ones are scattered.
     void resetStars();
+
+    // The ships and stills, for saved games (shots are left out).
+    void save(SaveWriter& w) const;
+    // Throws FormatError when the saved data does not fit.
+    void restore(SaveReader& r);
 
 private:
     void loadPictures();

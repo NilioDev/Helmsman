@@ -3,6 +3,8 @@
 // The player's side of a planet mission: the pointer and what a click does,
 // the action menu, the inventory, and the text boxes.
 #include "helmsman/away/mission.hpp"
+
+#include "helmsman/away/menus.hpp"
 #include "helmsman/away/ui.hpp"
 
 #include "helmsman/data/reader.hpp"
@@ -874,29 +876,6 @@ int Mission::inventory(bool) {
 namespace {
 
 // The order of the missions, for the descriptions of saved games.
-int missionNumber(const std::string& name) {
-    static const char* const kOrder[] = {"DEMON", "TUG", "LOVE", "MUDD", "FEATHER", "TRIAL", "SINS", "VENG"};
-    static const int kNumber[] = {1, 2, 3, 4, 5, 5, 6, 7};
-    for (int i = 0; i < 8; ++i) {
-        if (upper(name) == kOrder[i]) {
-            return kNumber[i];
-        }
-    }
-    return 0;
-}
-
-std::string timeNow() {
-    const std::time_t t = std::time(nullptr);
-    std::tm local{};
-#if defined(_WIN32)
-    localtime_s(&local, &t);
-#else
-    localtime_r(&t, &local);
-#endif
-    char buf[32];
-    std::strftime(buf, sizeof buf, "%d %b %H:%M", &local);
-    return buf;
-}
 
 } // namespace
 
@@ -943,55 +922,26 @@ void Mission::optionsMenu() {
 }
 
 void Mission::saveMenu() {
-    Platform& p = session_.platform;
-    const auto saves = listSaves(p.saveFolder, "anniversary");
-    std::vector<std::string> lines = {"Save Game"};
-    const bool room = static_cast<int>(saves.size()) < kMaxSaves;
-    if (room) {
-        lines.push_back("#GENE\\GENER023#Save new game.");
-    }
-    for (const auto& s : saves) {
-        lines.push_back("Replace: " + s.description);
-    }
-    const int choice = showText(lines, 0x14, 0x14, 0xB0, false);
-    if (choice < 0 || choice >= static_cast<int>(lines.size()) - 1) {
-        return;
-    }
-    int number = -1;
-    if (room && choice == 0) {
-        number = freeSaveNumber(p.saveFolder, "anniversary");
-    } else {
-        number = saves[static_cast<std::size_t>(choice - (room ? 1 : 0))].number;
-    }
     SaveWriter w;
     w.text("away");
     session_.save(w);
-    save(w);
-    char description[64];
-    std::snprintf(description, sizeof description, "Mission %d, %s", missionNumber(name_), timeNow().c_str());
-    if (number < 0 || !writeSave(p.saveFolder, "anniversary", number, description, w.data)) {
-        showText({"", "The game could not be saved."}, 0x14, 0x14, 0xB0, false);
+    w.u8(session_.saveVoyage ? 1 : 0);
+    if (session_.saveVoyage) {
+        session_.saveVoyage(w);
     }
+    save(w);
+    Ui u = ui();
+    saveGameMenu(u, name_, w.data);
 }
 
 void Mission::loadMenu() {
-    Platform& p = session_.platform;
-    const auto saves = listSaves(p.saveFolder, "anniversary");
-    if (saves.empty()) {
-        showText({"", "#GENE\\GENERJ01#No games saved."}, 0x14, 0x14, 0xB0, false);
-        return;
+    Ui u = ui();
+    const int number = loadGameMenu(u);
+    if (number >= 0) {
+        MissionResult r;
+        r.loadSave = number;
+        result_ = r;
     }
-    std::vector<std::string> lines = {"Load Game"};
-    for (const auto& s : saves) {
-        lines.push_back(s.description);
-    }
-    const int choice = showText(lines, 0x14, 0x14, 0xB0, false);
-    if (choice < 0 || choice >= static_cast<int>(saves.size())) {
-        return;
-    }
-    MissionResult r;
-    r.loadSave = saves[static_cast<std::size_t>(choice)].number;
-    result_ = r;
 }
 
 void Mission::quitMenu() {

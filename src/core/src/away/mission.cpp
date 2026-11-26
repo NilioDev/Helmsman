@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "helmsman/away/mission.hpp"
 
+#include "helmsman/away/menus.hpp"
 #include "helmsman/data/reader.hpp"
 
 #include <algorithm>
@@ -1074,7 +1075,18 @@ std::uint32_t Mission::roomFunction(int fn, const std::array<std::uint16_t, 6>& 
     case 0x11:
         endMission(s(1), s(2), s(3));
         return 0;
-    case 0x12:
+    case 0x12: { // the game is lost
+        Ui u = ui();
+        int load = -1;
+        MissionResult r;
+        switch (gameOverMenu(u, load)) {
+        case GameOverChoice::Load: r.loadSave = load; break;
+        case GameOverChoice::Restart: r.restart = true; break;
+        case GameOverChoice::Quit: r.quit = true; break;
+        }
+        result_ = r;
+        return 0;
+    }
     case 0x13:
         return 0;
     case 0x14:
@@ -1352,7 +1364,8 @@ MissionResult playAway(Session& session, const std::string& mission, int room, i
         Mission m(session, mission);
         result = m.run(room, spawn);
     }
-    while (result.loadSave >= 0 && !result.quit) {
+    // In the whole game, the game loads saved games itself.
+    while (!session.saveVoyage && result.loadSave >= 0 && !result.quit) {
         const int number = result.loadSave;
         const auto data = readSave(session.platform.saveFolder, "anniversary", number);
         if (!data) {
@@ -1365,6 +1378,9 @@ MissionResult playAway(Session& session, const std::string& mission, int room, i
             throw FormatError("a saved game of a part Helmsman does not play yet");
         }
         session.restore(r);
+        if (r.u8() != 0) {
+            throw FormatError("a saved game of the whole game, not of one mission");
+        }
         Mission m(session, mission);
         result = m.resume(r);
     }
