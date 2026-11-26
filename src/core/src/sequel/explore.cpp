@@ -16,6 +16,7 @@ namespace helmsman::sequel::detail {
 namespace {
 
 namespace room {
+constexpr std::uint16_t kThings = 0x12;
 constexpr std::uint16_t kExits = 0x16;
 constexpr std::uint16_t kAreas = 0x1A;
 } // namespace room
@@ -204,6 +205,23 @@ void Game::startExplorer(int most, const std::string& path) {
 
 // The explorer's answer to a choice of `count`: the one a replayed path
 // gives, or one at random.
+// A point inside a polygon: its middle when that is inside, else a corner.
+static std::pair<int, int> insidePoint(const Polygon& p) {
+    long sx = 0;
+    long sy = 0;
+    for (const auto& [px, py] : p.points) {
+        sx += px;
+        sy += py;
+    }
+    const long n = static_cast<long>(p.points.size());
+    const int cx = static_cast<int>(sx / n);
+    const int cy = static_cast<int>(sy / n);
+    if (p.contains(cx, cy)) {
+        return {cx, cy};
+    }
+    return p.points.front();
+}
+
 int Game::exploreChoice(int count) {
     Explorer& x = *explore_;
     if (!x.replay.empty() && x.replay.front().type == kPick) {
@@ -557,18 +575,7 @@ void Game::exploreIdle() {
             if (p.id != act.a || p.points.empty()) {
                 continue;
             }
-            long sx = 0;
-            long sy = 0;
-            for (const auto& [px, py] : p.points) {
-                sx += px;
-                sy += py;
-            }
-            int cx = static_cast<int>(sx / static_cast<long>(p.points.size()));
-            int cy = static_cast<int>(sy / static_cast<long>(p.points.size()));
-            if (!p.contains(cx, cy)) {
-                cx = p.points.front().first;
-                cy = p.points.front().second;
-            }
+            const auto [cx, cy] = insidePoint(p);
             walk(0, -1, -1, cx, cy, 0);
         }
         break;
@@ -587,6 +594,18 @@ void Game::exploreIdle() {
         x.lastTick = static_cast<long long>(roomTicks_);
         break;
     default:
+        if (act.type == 1) {
+            // A walk no room code takes goes where the player clicked: on
+            // the thing.
+            for (const auto& p : polygons(room::kThings, room::kThings + 2)) {
+                if (p.id == act.a && !p.points.empty()) {
+                    const auto [cx, cy] = insidePoint(p);
+                    p_.mouseX = cx;
+                    p_.mouseY = cy;
+                    break;
+                }
+            }
+        }
         m_.set16(0xC212, static_cast<std::uint16_t>(kirk.x));
         m_.set16(0xC214, static_cast<std::uint16_t>(kirk.y));
         post(static_cast<std::uint8_t>(act.type), static_cast<std::uint8_t>(act.a), static_cast<std::uint8_t>(act.b));
