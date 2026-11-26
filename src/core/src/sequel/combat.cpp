@@ -153,6 +153,7 @@ void Game::applyView() {
         return;
     }
     space_->setView(m_.u16(fight::kFullView) != 0 ? kWholeScreen : kViewscreen, zoom());
+    space_->setLook(m_.s16(fight::kLook));
 }
 
 void Game::setManual(bool on) {
@@ -447,7 +448,10 @@ bool Game::combatButton(int id) {
         return true;
     }
     if (id >= 0x80 && id <= 0x85) {
-        m_.set16(fight::kLook, static_cast<std::uint16_t>((id == 0x80 ? 2 : id == 0x81 ? 3 : id == 0x82 ? 0 : id - 0x82)));
+        // Left, right, ahead, behind, up, down.
+        static constexpr int kLooks[] = {2, 3, 0, 1, 4, 5};
+        m_.set16(fight::kLook, static_cast<std::uint16_t>(kLooks[id - 0x80]));
+        applyView();
         return true;
     }
     if (id >= 0x90 && id <= 0x94) {
@@ -542,6 +546,7 @@ bool Game::combatKey(const KeyPress& k) {
     default:
         if (k.scancode >= 0x3D && k.scancode <= 0x42) { // F3..F8: look about
             m_.set16(fight::kLook, static_cast<std::uint16_t>(k.scancode - 0x3D));
+            applyView();
             return true;
         }
         return false;

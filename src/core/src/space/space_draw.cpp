@@ -89,6 +89,31 @@ void Space::placeCamera() {
     if (!outside_) {
         camera_ = player().pos;
         cameraAxes_ = player().axes;
+        // Looking another way turns the camera's axes: the new forward is
+        // the old right, left, up or down (or behind), as the second
+        // game's view menu asks.
+        auto& m = cameraAxes_.m;
+        using Row = std::array<std::int16_t, 3>;
+        auto get = [&m](int r) { return Row{m[3 * r], m[3 * r + 1], m[3 * r + 2]}; };
+        auto put = [&m](int r, const Row& v) {
+            for (int i = 0; i < 3; ++i) {
+                m[static_cast<std::size_t>(3 * r + i)] = v[static_cast<std::size_t>(i)];
+            }
+        };
+        auto neg = [](const Row& v) {
+            return Row{static_cast<std::int16_t>(-v[0]), static_cast<std::int16_t>(-v[1]), static_cast<std::int16_t>(-v[2])};
+        };
+        const Row r = get(0);
+        const Row u = get(1);
+        const Row f = get(2);
+        switch (look_) {
+        case 1: put(0, neg(r)); put(2, neg(f)); break;
+        case 2: put(0, f); put(2, neg(r)); break;
+        case 3: put(0, neg(f)); put(2, r); break;
+        case 4: put(1, neg(f)); put(2, u); break;
+        case 5: put(1, f); put(2, neg(u)); break;
+        default: break;
+        }
         return;
     }
     camera_ = outsidePos_;

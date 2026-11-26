@@ -248,6 +248,10 @@ public:
         outside_ = false;
         fixed_ = false;
     }
+    // Which way the view from the bridge looks: 0 ahead, 1 behind, 2 left,
+    // 3 right, 4 up, 5 down.
+    void setLook(int look) { look_ = look >= 0 && look <= 5 ? look : 0; }
+    int look() const { return look_; }
     // Watches from `where` straight along the z axis, the player's ship
     // drawn too (for the titles).
     void watchAlongZ(const Vec& where) {
@@ -333,6 +337,7 @@ private:
     Mat cameraAxes_ = Mat::identity();
 
     bool outside_ = false;
+    int look_ = 0;
     Vec outsidePos_;
 
     Object planet_;
