@@ -209,6 +209,12 @@ int main(int argc, char** argv) {
                     if (const char* m = std::getenv("HELMSMAN_MISSION")) {
                         voyage.mission = std::atoi(m);
                     }
+                    if (std::getenv("HELMSMAN_ENDING") != nullptr) {
+                        // The last battle just won: the verdicts and the closing titles.
+                        voyage.mission = 7;
+                        voyage.stage = 1;
+                        voyage.textFile = "veng";
+                    }
                     bridge::Bridge b(session, voyage);
                     if (const char* ships = std::getenv("HELMSMAN_SHIPS")) {
                         // For trying space out: ships to meet, "KLINGON,ORION".

@@ -174,7 +174,9 @@ public:
     void restoreState(SaveReader& r);
 
     // The last mission is over: on to the closing titles.
-    void endGame() { result_ = BridgeResult{Leave::Ending, -1}; }
+    // The closing titles after the last mission, then the end-of-game
+    // choice to load, start again or quit.
+    void endGame();
 
     // True while the ship is in orbit around a planet (and does not fly).
     bool inOrbit() const { return voyage_.inOrbit; }
@@ -218,6 +220,9 @@ private:
     void captainsLog();
     void computer();
     void shipLost();
+    void gameOver();
+    bool creditFrames(int index, std::int32_t speed, int frames);
+    space::Vec camera_{}; // where the closing titles are watched from
     void transporterMenu();
     away::Ui ui();
 

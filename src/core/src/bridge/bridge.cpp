@@ -1402,12 +1402,95 @@ void Bridge::shipLost() {
     setFullView(false);
     away::Ui u = ui();
     away::textBox(u, {"", "#GENE\\SPACE000#The Enterprise has been destroyed!"}, 0x14, 0x14, 0xB0);
+    gameOver();
+}
+
+void Bridge::gameOver() {
+    away::Ui u = ui();
     int load = -1;
     switch (away::gameOverMenu(u, load)) {
     case away::GameOverChoice::Load: result_ = BridgeResult{Leave::LoadSave, load}; break;
     case away::GameOverChoice::Restart: result_ = BridgeResult{Leave::Restart, -1}; break;
     case away::GameOverChoice::Quit: result_ = BridgeResult{Leave::Quit, -1}; break;
     }
+}
+
+// Moves the camera and a credit card on for some frames of the closing
+// titles; gives false when the player skips them.
+bool Bridge::creditFrames(int index, std::int32_t speed, int frames) {
+    Platform& p = session_.platform;
+    for (int i = 0; i < frames; ++i) {
+        if (p.quit || p.takeSkip()) {
+            return false;
+        }
+        camera_.z += 10;
+        if (index >= 0) {
+            space_.object(index).pos.z += speed + 10;
+        }
+        space_.watchAlongZ(camera_);
+        drawFrame();
+        for (int t = 0; t < 3; ++t) {
+            session_.waitTick();
+        }
+    }
+    return !p.quit;
+}
+
+void Bridge::endGame() {
+    // The names of the people who made the game, out in space with the
+    // theme playing, and then a last word for the show's creator.
+    Platform& p = session_.platform;
+    session_.stopEffects();
+    session_.loadMusic("title");
+    session_.playMusic(0);
+    setFullView(true);
+    p.screen.fill(0);
+    p.pointerShown = false;
+    p.takeSkip();
+    camera_ = space_.player().pos;
+    const std::int32_t focal = space_.focal();
+    auto card = [&](const char* name) {
+        const int index = space_.addStill(name, camera_);
+        if (index >= 0) {
+            space_.object(index).scale = 1;
+        }
+        return index;
+    };
+    auto drop = [&](int& index) {
+        if (index >= 0) {
+            space_.remove(index);
+            index = -1;
+        }
+    };
+    bool going = true;
+    int index = card("credit00");
+    // It comes out from the watcher and stops at its own size.
+    going = creditFrames(index, focal / 10, 10);
+    if (going && index >= 0) {
+        space_.object(index).pos.z = camera_.z + focal;
+    }
+    going = going && creditFrames(index, 0, 0x32);
+    drop(index);
+    going = going && creditFrames(-1, 0, 0xF);
+    if (going) {
+        index = card("credgene");
+        if (index >= 0) {
+            space_.object(index).pos.z = camera_.z + focal;
+        }
+        session_.playEffect("GENEEULO");
+        do {
+            going = creditFrames(index, 0, 0xDC);
+        } while (going && p.soundQueued[static_cast<int>(SoundChannel::Effect)] > 0.0);
+        drop(index);
+        going = going && creditFrames(-1, 0, 0xF);
+    }
+    drop(index);
+    session_.stopEffects();
+    session_.loadMusic("bridge");
+    space_.watchFromBridge();
+    p.pointerShown = true;
+    setFullView(false);
+    gameOver();
 }
 
 BridgeResult Bridge::run() {
