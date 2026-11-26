@@ -47,6 +47,7 @@ constexpr Station kStations[] = {{0, "BSTNDKI"}, {1, "BSTNDSP"}, {6, "BSTNDUH"},
 
 // Where the viewscreen's pictures go.
 constexpr int kViewscreenX = 0x47;
+constexpr std::uint16_t kViewscreenName = 0xC00A; // who is on the viewscreen (8 bytes)
 constexpr int kViewscreenY = 0x1E;
 
 // The star systems on the star map: 20 places (x, y).
@@ -303,6 +304,8 @@ private:
     // The bridge.
     void bridge();
     void loadBridge();
+    void viewscreenColours(const std::string& name);
+    bool speakerBelow_ = false; // the next lines' box sits centred at the foot of the screen
     void tickSprites();
     void drawSprite(const Sprite& s);
     void drawBridge();

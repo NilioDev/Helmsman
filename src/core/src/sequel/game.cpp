@@ -140,10 +140,31 @@ void Game::loadBridge() {
     palette_ = Palette::fromBytes(std::span<const std::uint8_t>(bytes).first(768));
     background_ = Surface(320, 200);
     std::copy_n(bytes.begin() + 768, 64000, background_.data());
+    if (const auto onScreen = m_.text(kViewscreenName, 8); !onScreen.empty()) {
+        viewscreenColours(onScreen);
+    }
     shade_ = shadeTable(palette_, 45);
     for (const auto& st : kStations) {
         setSprite(crew_[st.actor], st.anim);
     }
+}
+
+// The colours of whoever is on the viewscreen: their palette file gives
+// the colours their pictures use, the rest stay the bridge's.
+void Game::viewscreenColours(const std::string& name) {
+    const auto pal = file(name + ".PAL");
+    if (!pal || pal->size() < 768) {
+        return;
+    }
+    const auto theirs = Palette::fromBytes(std::span<const std::uint8_t>(*pal).first(768));
+    auto take = [&](int from, int to) {
+        for (int i = from; i < to; ++i) {
+            palette_[static_cast<std::size_t>(i)] = theirs[static_cast<std::size_t>(i)];
+        }
+    };
+    take(0x30, 0x80);
+    take(0xD8, 0xDC);
+    take(0xE0, 0xF6);
 }
 
 void Game::tickSprites() {
@@ -547,8 +568,13 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
         }
         const int w = static_cast<int>(widest) * SequelFont::kWidth + 12;
         const int h = static_cast<int>(count + (name.empty() ? 0 : 1)) * SequelFont::kHeight + 10;
-        const int x = std::clamp(bx, 2, 318 - w);
-        const int y = std::clamp(by, 2, 198 - h);
+        int x = std::clamp(bx, 2, 318 - w);
+        int y = std::clamp(by, 2, 198 - h);
+        if (speakerBelow_) {
+            // Centred, at the foot of the screen.
+            x = std::clamp(160 - w / 2, 2, 318 - w);
+            y = std::max(2, 198 - h);
+        }
         // A see-through dark box with a frame in the speaker's colour.
         for (int yy = y; yy < y + h; ++yy) {
             for (int xx = x; xx < x + w; ++xx) {
@@ -688,13 +714,23 @@ void Game::evaluation(bool shown) {
         "Starfleet's best starship captain is secure. Cain out.",
     };
     const int rating = percent <= 50 ? 0 : percent <= 70 ? 1 : percent <= 85 ? 2 : percent <= 99 ? 3 : 4;
+    static constexpr int kSongs[5] = {9, 9, 0x0C, 0x0E, 0x0A};
     if (shown) {
-        setSprite(viewscreen_, "TLKWOMAN");
+        music(kSongs[rating], -1);
+        setSprite(viewscreen_, "WOMAN");
         viewscreen_.x = kViewscreenX;
         viewscreen_.y = kViewscreenY;
         viewscreen_.still = true;
+        viewscreen_.shown = !viewscreen_.frames.empty();
         viewscreenTalks_ = true;
+        m_.setText(kViewscreenName, "woman", 8);
+        viewscreenColours("woman");
         const std::string admiral = "Admiral Cain";
+        speakerBelow_ = true;
+        struct Below {
+            bool& b;
+            ~Below() { b = false; }
+        } below{speakerBelow_};
         pendingTalker_ = kViewscreenSpeaker;
         sayAs(admiral, "#EVAL000#I've reviewed your report from your recent assignment, Captain and have a few comments.");
         pendingTalker_ = kViewscreenSpeaker;
@@ -761,6 +797,15 @@ Machine::Flow Game::spaceCommand(ScriptCall& c, std::uint32_t& result) {
         viewscreenTalks_ = talks;
         viewscreen_.x = kViewscreenX;
         viewscreen_.y = kViewscreenY;
+        // Someone new on the viewscreen brings their own colours, and
+        // perhaps a song (the second number, -1 for none).
+        if (!name.empty() && upperName(name) != upperName(m_.text(kViewscreenName, 8))) {
+            m_.setText(kViewscreenName, name, 8);
+            viewscreenColours(name);
+            if (c.sarg(1) != -1) {
+                music(c.sarg(1), -1);
+            }
+        }
         return Machine::Flow::Go;
     }
     case cmd::kViewscreenOn:
