@@ -121,9 +121,9 @@ void Game::libraryComputer() {
         ~Done() { v = nullptr; }
     } done{computerVoices_};
     const auto key = assets_.data().load("DB.KEY");
-    const std::string computer = "Computer";
+    const std::string computer = m_.text(prog::kComputer, 512);
     while (!p_.quit) {
-        const std::string topic = askText("Computer (Select Topic):");
+        const std::string topic = askText(m_.text(prog::kSelectTopic, 512));
         if (topic.find_first_not_of(' ') == std::string::npos) {
             break;
         }
@@ -135,7 +135,7 @@ void Game::libraryComputer() {
             }
         }
         if (entries.empty()) {
-            sayAs(computer, "No references for specified topic.");
+            sayAs(computer, m_.text(prog::kNoReferences, 512));
             continue;
         }
         std::size_t pick = 0;
@@ -157,13 +157,23 @@ void Game::libraryComputer() {
     }
 }
 
+// The program's line breaks become the spaces our text boxes wrap at.
+static std::string flat(std::string s) {
+    for (auto& c : s) {
+        if (c == '\n') {
+            c = ' ';
+        }
+    }
+    return s;
+}
+
 // The points the admiral gave for each episode done so far, the latest
 // first.
 void Game::captainsLog() {
     const int done = std::clamp<int>(m_.s16(ds::kEpisode), 0, 8);
     const std::string log = "Captain's Log";
     if (done == 0) {
-        sayAs(log, "#C_007#No recent missions have been completed.");
+        sayAs(log, m_.text(prog::kNoMissions, 512));
         return;
     }
     int total = 0;
@@ -175,10 +185,15 @@ void Game::captainsLog() {
         if (name.empty()) {
             continue;
         }
-        lines += name + ":  " + std::to_string(points) + (points == 1 ? " point.  " : " points.  ");
+        std::string each = m_.text(points == 1 ? prog::kOnePointEach : prog::kPointsEach, 512);
+        if (const auto at = each.find("%d"); at != std::string::npos) {
+            each.replace(at, 2, std::to_string(points));
+        }
+        lines += name + flat(each);
     }
-    sayAs(log, "We have earned " + std::to_string(total) + (total == 1 ? " point " : " points ") +
-                   "for the following recently completed missions:  " + lines);
+    sayAs(log, m_.text(prog::kEarned, 512) + std::to_string(total) +
+                   m_.text(total == 1 ? prog::kPoint : prog::kPoints, 512) +
+                   flat(m_.text(prog::kForMissions, 512)) + lines);
 }
 
 } // namespace helmsman::sequel::detail

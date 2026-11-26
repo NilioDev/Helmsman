@@ -242,7 +242,7 @@ void Game::saveMenu() {
     std::vector<std::string> lines;
     const bool room = static_cast<int>(saves.size()) < kMaxSaves;
     if (room) {
-        lines.push_back("#GENER023#Save new game.");
+        lines.push_back(m_.text(prog::kSaveNew, 512));
     }
     for (const auto& s : saves) {
         lines.push_back("Replace: " + s.description);
@@ -265,7 +265,7 @@ void Game::saveMenu() {
 bool Game::loadMenu() {
     const auto saves = listSaves(p_.saveFolder, kGame);
     if (saves.empty()) {
-        menuBox("Load Game", {"There are no saved games."});
+        menuBox("Load Game", {m_.text(prog::kNoSaves, 512)});
         return false;
     }
     std::vector<std::string> lines;
@@ -278,7 +278,7 @@ bool Game::loadMenu() {
     }
     auto data = readSave(p_.saveFolder, kGame, saves[static_cast<std::size_t>(choice)].number);
     if (!data) {
-        menuBox("Load Game", {"Unable to load game."});
+        menuBox("Load Game", {m_.text(prog::kCannotLoad, 512)});
         return false;
     }
     throw RestoreGame{std::move(*data), -1};
@@ -326,7 +326,7 @@ bool Game::optionsMenu() {
         setMusicOn(!musicOn_);
         break;
     case 6:
-        if (menuBox("Quit", {"#GENER018#Quit the game.", "Cancel."}) == 0) {
+        if (menuBox("Quit", {m_.text(prog::kQuitGame, 512), "Cancel."}) == 0) {
             p_.quit = true;
             return true;
         }
@@ -345,10 +345,10 @@ void Game::gameOverMenu() {
     const bool any = anySaves();
     std::vector<std::string> lines;
     if (any) {
-        lines.push_back("#GENER006#Load a previously saved game.");
+        lines.push_back(m_.text(prog::kLoadSaved, 512));
     }
-    lines.push_back("#GENER020#Restart the game.");
-    lines.push_back("#GENER018#Quit the game.");
+    lines.push_back(m_.text(prog::kRestart, 512));
+    lines.push_back(m_.text(prog::kQuitGame, 512));
     while (!p_.quit) {
         int choice = menuBox("Game Over", lines);
         if (choice < 0) {

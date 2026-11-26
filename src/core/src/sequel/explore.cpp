@@ -116,6 +116,7 @@ struct Explorer {
         int room = 0;
     };
     int most = 3000;
+    bool follow = false; // the game goes on after the mission (no more exploring)
     std::vector<Node> nodes;
     std::map<std::uint64_t, int> seen;
     int expect = -1;   // the node just loaded
@@ -189,9 +190,10 @@ int bestNode(const Explorer& x) {
 
 } // namespace
 
-void Game::startExplorer(int most, const std::string& path) {
+void Game::startExplorer(int most, const std::string& path, bool follow) {
     explore_ = std::make_shared<Explorer>();
     explore_->most = most;
+    explore_->follow = follow;
     // Nobody listens either.
     setMusicOn(false);
     soundOn_ = false;
@@ -272,6 +274,12 @@ void Game::exploreJump(const char* why) {
         if (!exploreOtherAnswers() && ++n.failed >= kMostFailures) {
             n.next = n.actions.size();
         }
+    } else if (*why && x.expect >= 0) {
+        // The state ends by itself before any order: it is lost already.
+        Explorer::Node& n = x.nodes[static_cast<std::size_t>(x.expect)];
+        std::printf("%s before an order in %s\n", why, n.path.c_str());
+        std::fflush(stdout);
+        n.next = n.actions.size();
     }
     // The state that looks furthest into the mission, with orders left to
     // try (the newest of those).
@@ -292,6 +300,14 @@ void Game::exploreJump(const char* why) {
 void Game::exploreEnd(int how) {
     Explorer& x = *explore_;
     const std::string path = x.from >= 0 ? x.nodes[static_cast<std::size_t>(x.from)].path + " " + x.doing : "";
+    if (x.follow) {
+        // The path is played; the game goes on from here as a player's.
+        std::printf("%s (%d %d), the game goes on: %s\n", how == 1 ? "mission over" : "beamed up", m_.s16(0xC222),
+                    m_.s16(0xC224), path.c_str());
+        std::fflush(stdout);
+        explore_.reset();
+        return;
+    }
     if (how == 1) {
         std::printf("mission over (%d %d) after %zu states, %d orders: %s\n", m_.s16(0xC222), m_.s16(0xC224),
                     x.nodes.size(), x.tried, path.c_str());

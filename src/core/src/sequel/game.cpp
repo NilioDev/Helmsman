@@ -713,21 +713,6 @@ void Game::evaluation(bool shown) {
     const int best = m_.s16(kEpisodePoints);
     const int got = std::clamp<int>(m_.s16(kEpisodeScore), 0, std::max(0, best));
     const int percent = best > 0 ? got * 100 / best : 0;
-    // The ratings from worst (0) to best (4).
-    static constexpr const char* kWords[5] = {
-        "#EVAL005#I'll be frank Kirk, Starfleet expects more out of you than that.  If I were you, I'd do some "
-        "serious soul-searching about my command ability. I would expect as much from a cadet.  But from "
-        "Starfleet's finest... I'm going to have to forward my concerns to Command. Cain out.",
-        "#EVAL004#While you acheived the desired results for your assignment, Jim, I can only give you a "
-        "satifactory rating.  I would expect as much from a cadet.  I'm concerned about your performance and am "
-        "going to have to forward my concerns to Command. Cain out.",
-        "#EVAL003#Well done, Kirk. Keep up the good work. I must say, however, your performance is not what we've "
-        "come to expect from James T. Kirk. I guess we all have our off days, Captain. Cain out.",
-        "#EVAL002#The top brass at Starfleet are impressed with the results of your recent performance.  "
-        "Outstanding work, Jim.  Keep up the good work. Cain out.",
-        "#EVAL001#I am very pleased with your performance. It was a perfect mission, Jim! Your reputation as "
-        "Starfleet's best starship captain is secure. Cain out.",
-    };
     const int rating = percent <= 50 ? 0 : percent <= 70 ? 1 : percent <= 85 ? 2 : percent <= 99 ? 3 : 4;
     static constexpr int kSongs[5] = {9, 9, 0x0C, 0x0E, 0x0A};
     if (shown) {
@@ -740,16 +725,16 @@ void Game::evaluation(bool shown) {
         viewscreenTalks_ = true;
         m_.setText(kViewscreenName, "woman", 8);
         viewscreenColours("woman");
-        const std::string admiral = "Admiral Cain";
+        const std::string admiral = m_.text(prog::kAdmiral, 512);
         speakerBelow_ = true;
         struct Below {
             bool& b;
             ~Below() { b = false; }
         } below{speakerBelow_};
         pendingTalker_ = kViewscreenSpeaker;
-        sayAs(admiral, "#EVAL000#I've reviewed your report from your recent assignment, Captain and have a few comments.");
+        sayAs(admiral, m_.text(prog::kEvalOpening, 512));
         pendingTalker_ = kViewscreenSpeaker;
-        sayAs(admiral, kWords[rating]);
+        sayAs(admiral, m_.text(prog::kEval[rating], 512));
         viewscreen_.shown = false;
         viewscreenTalks_ = false;
     }
@@ -1186,14 +1171,15 @@ void Game::startMenu() {
     p_.pointerShown = true;
     while (!p_.quit && anySaves()) {
         const int choice =
-            menuBox("Start Game", {"#GENER006#Load a previously saved game.", "#GENER020#Restart the game."});
+            menuBox("Start Game", {m_.text(prog::kLoadSaved, 512), m_.text(prog::kRestart, 512)});
         if (choice == 1 || choice < 0) {
             break;
         }
         loadMenu();
     }
-    const int level = menuBox("Space Combat Level", {"Federation Cadet (None).", "Academy Graduate (Easy).",
-                                                     "Commissioned Officer (Hard)."});
+    const int level = menuBox(m_.text(prog::kCombatLevel, 512),
+                              {m_.text(prog::kLevels[0], 512), m_.text(prog::kLevels[1], 512),
+                               m_.text(prog::kLevels[2], 512)});
     combatLevel_ = level < 0 ? 2 : level;
 }
 
@@ -1246,7 +1232,8 @@ void Game::run() {
 
 // For the tools: straight to an away mission ("episode room spawn"), or
 // to a place in an episode's space script ("space episode offset", the
-// offset in hex). True when the game is over after it.
+// offset in hex), or an episode from its start with its away mission
+// played by given orders ("follow episode most orders"). True when the game is over after it.
 bool Game::devStart() {
     std::istringstream in(p_.devStart);
     std::string first;
@@ -1264,14 +1251,23 @@ bool Game::devStart() {
         devAwayMission(ep + " " + std::to_string(room) + " " + std::to_string(spawn));
         return true;
     }
-    if (first != "space") {
+    std::string ep;
+    std::string at = "0";
+    int level = 1;
+    if (first == "follow") {
+        // "follow episode most orders": the episode from its start, its
+        // away mission played by the orders, and on from there.
+        int most = 3000;
+        in >> ep >> most;
+        std::string path;
+        std::getline(in, path);
+        startExplorer(most, path, true);
+    } else if (first != "space") {
         devAwayMission(p_.devStart);
         return true;
+    } else {
+        in >> ep >> at >> level;
     }
-    std::string ep;
-    std::string at;
-    int level = 1;
-    in >> ep >> at >> level;
     m_.set16(ds::kCombatLevel, static_cast<std::uint16_t>(std::clamp(level, 0, 2)));
     static const char* const kNames[] = {"fed", "sentnl", "noman", "light", "voids", "scotty", "madness", "meth"};
     for (int i = 0; i < 8; ++i) {

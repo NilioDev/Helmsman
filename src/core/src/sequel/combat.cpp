@@ -35,21 +35,21 @@ const space::HudColours kColours = [] {
 const std::vector<std::string> kPanelNames = {"ent", "klg", "ori", "rom", "fkr"};
 
 // What the crew says.
-constexpr Line kShieldsUp{4, "#b_340#Raising shields."};
-constexpr Line kShieldsDown{4, "#b_337#Lowering shields."};
-constexpr Line kArming{5, "#b_351#Arming weapons."};
-constexpr Line kDisarming{5, "#b_354#Disarming weapons."};
-constexpr Line kLocked{5, "#chk_001#Our weapons, are locked, Keptin."};
-constexpr Line kNoEffect{5, "#chk_002#I do not think that would have any effect, Keptin."};
-constexpr Line kYesKeptin{5, "#chk_003#Yes, Keptin."};
-constexpr Line kAnalysisOn{4, "#b_344#Target Analysis On."};
-constexpr Line kAnalysisOff{4, "#b_343#Target Analysis Off."};
-constexpr Line kBoosting{7, "#BRID_S41#She can't take it, Captain."};
-constexpr Line kBoosted{7, "#BRID_S32#I don't know how long she can take it, Captain."};
-constexpr Line kOrbitFirst{4, "#b_349#We must first leave orbit, Sir."};
-constexpr Line kShieldsFalling{7, "#brid_s45#The shields are falling!"};
-constexpr Line kWeaponsOff{7, "#brid_s37#Our weapons are off-line!"};
-constexpr Line kSpeedFalling{7, "#brid_s47#We can't maintain our speed!"};
+constexpr Line kShieldsUp{4, 0x0592};
+constexpr Line kShieldsDown{4, 0x05AA};
+constexpr Line kArming{5, 0x05C3};
+constexpr Line kDisarming{5, 0x05DA};
+constexpr Line kLocked{5, 0x0400};
+constexpr Line kNoEffect{5, 0x042A};
+constexpr Line kYesKeptin{5, 0x0466};
+constexpr Line kAnalysisOn{4, 0x04CC};
+constexpr Line kAnalysisOff{4, 0x04E7};
+constexpr Line kBoosting{7, 0x0532};
+constexpr Line kBoosted{7, 0x0558};
+constexpr Line kOrbitFirst{4, 0x050B};
+constexpr Line kShieldsFalling{7, 0x02FC};
+constexpr Line kWeaponsOff{7, 0x031F};
+constexpr Line kSpeedFalling{7, 0x0343};
 
 // The parts the repair crew can be sent to first (damage control's
 // buttons, in order), and what they are called when they are repaired.
@@ -286,7 +286,7 @@ void Game::spaceReports() {
             sayLine(kSpeedFalling);
             break;
         case 7: {
-            const std::string text = std::string(partName(what)) + " repaired, Captain.";
+            const std::string text = std::string(partName(what)) + m_.text(prog::kRepaired, 512);
             say(7, {text}, 0);
             break;
         }

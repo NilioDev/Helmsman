@@ -22,3 +22,11 @@ and nothing is read outside it.
 What Helmsman takes from the image:
 
 - the planets' colour ramps (offset 0x34720, see `planets.md`).
+- in the second game's program, the lines the bridge crew says by
+  themselves, the admiral's ratings, the captain's log of points, the
+  library computer's prompts and the start, save and load menus. All of
+  them sit in its data segment (which starts at paragraph 0x2B87 of the
+  unpacked image), each one ending in a zero byte. Helmsman knows only
+  where each one starts and reads the words from the player's copy; a
+  few of them break their lines with `\n`, which Helmsman turns into
+  spaces for its text boxes.

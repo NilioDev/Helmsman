@@ -167,19 +167,47 @@ constexpr std::uint16_t kBoostSpare = 0x6E9E;
 } // namespace fight
 
 // Default lines of the bridge crew (as the original says them when the
-// script has nothing to add).
+// script has nothing to add): who says it, and where in the data segment
+// the program keeps the line.
 struct Line {
     int who;
-    const char* text;
+    std::uint16_t at;
 };
-constexpr Line kNothingToReport{1, "#B_155#Nothing to report, Captain."};
-constexpr Line kHailing{6, "#BRIDU016#Hailing frequencies open."};
-constexpr Line kNotInOrbit{4, "#B_350#We're not in orbit Captain."};
-constexpr Line kRightNow{4, "Right now, Captain?"};
-constexpr Line kUnderAttack{1, "#B_348#Unable to comply, Captain. We're under attack."};
-constexpr Line kNotDone{1, "#B_338#May I respectfully remind the Captain that we haven't accomplished our mission, Sir."};
-constexpr Line kOrbiting{4, "#B_333#Entering standard orbit."};
-constexpr Line kLeaveOrbitFirst{4, "#B_349#We must first leave orbit, Sir."};
+
+// More of the program's own texts, by where the data segment keeps them.
+namespace prog {
+constexpr std::uint16_t kAdmiral = 0x2B52;  // the admiral's name
+constexpr std::uint16_t kEvalOpening = 0x2F77;  // the rating's first line
+constexpr std::uint16_t kEval[5] = {0x2B5F, 0x2C7A, 0x2D7C, 0x2E3D, 0x2ED6};  // ratings, worst to best
+constexpr std::uint16_t kLoadSaved = 0x0F00;  // menu lines
+constexpr std::uint16_t kRestart = 0x0EC0;
+constexpr std::uint16_t kQuitGame = 0x0EDC;
+constexpr std::uint16_t kSaveNew = 0x0CF2;
+constexpr std::uint16_t kCombatLevel = 0x0FDC;  // its title, then three lines
+constexpr std::uint16_t kLevels[3] = {0x0FEF, 0x1008, 0x1021};
+constexpr std::uint16_t kNoSaves = 0x0CB0;
+constexpr std::uint16_t kCannotLoad = 0x0BE2;
+constexpr std::uint16_t kComputer = 0x06E5;  // the library computer
+constexpr std::uint16_t kSelectTopic = 0x0695;
+constexpr std::uint16_t kNoReferences = 0x06C2;
+constexpr std::uint16_t kEarned = 0x3013;  // the captain's log of points
+constexpr std::uint16_t kPoint = 0x302F;
+constexpr std::uint16_t kPoints = 0x3025;
+constexpr std::uint16_t kForMissions = 0x3037;
+constexpr std::uint16_t kOnePointEach = 0x3078;
+constexpr std::uint16_t kPointsEach = 0x3068;
+constexpr std::uint16_t kNoMissions = 0x2FD6;
+constexpr std::uint16_t kRepaired = 0x03E8;  // after a part's name
+} // namespace prog
+
+constexpr Line kNothingToReport{1, 0x295F};
+constexpr Line kHailing{6, 0x2982};
+constexpr Line kNotInOrbit{4, 0x2928};
+constexpr Line kRightNow{4, 0x294B};
+constexpr Line kUnderAttack{1, 0x29A6};
+constexpr Line kNotDone{1, 0x29DC};
+constexpr Line kOrbiting{4, 0x2A38};
+constexpr Line kLeaveOrbitFirst{4, 0x047C};
 
 inline std::string lowerName(std::string s) {
     for (auto& c : s) {
@@ -339,7 +367,7 @@ private:
     int menuBox(const std::string& title, const std::vector<std::string>& choices);
     // Set by menuBox for the length of one say().
     const std::string* menuTitle_ = nullptr;
-    void sayLine(const Line& line) { say(line.who, {line.text}, 0); }
+    void sayLine(const Line& line) { say(line.who, {m_.text(line.at, 512)}, 0); }
     // A line said by someone who is not one of the people (the admiral).
     int sayAs(const std::string& name, const std::string& text);
     const std::string* speakerName_ = nullptr;
@@ -405,7 +433,7 @@ private:
     // The explorer of the tools (explore.cpp).
     std::shared_ptr<Explorer> explore_;
     bool exploreDrawing_ = false; // the explorer wants one picture
-    void startExplorer(int most, const std::string& path);
+    void startExplorer(int most, const std::string& path, bool follow = false);
     void exploreIdle();
     void exploreFrame();
     void exploreCalled(int function);
