@@ -60,7 +60,7 @@ enum Officer : int {
 
 // What happened, as the game numbers it.
 enum EventType : int {
-    kTick = 0,         // what: unused; the voyage's clock tells the time
+    kTick = 0,         // what: the clock when it was posted (one behind the voyage's)
     kOrder = 1,        // what: the Action
     kShieldsFalling = 2,
     kWeaponsOffLine = 3,
@@ -126,6 +126,16 @@ public:
     int comm(const std::string& picture, const std::string& name, const std::string& text);
     void showComm(const std::string& picture);
     void hideComm();
+    // Kirk picks what to say from lines of the mission's text; gives the
+    // place of the line picked.
+    int choose(const std::vector<int>& lines);
+    // The player types a code; empty when cancelled.
+    std::string enterCode();
+    // A ship that only drifts (4 "ark7", 5 "derelict", 6 "masada",
+    // 7 "republic") comes into view as the Enterprise draws near and
+    // takes up orbit beside it.
+    void approach(int still);
+    void removeStill();
 
     // An officer's place: their animation ("bstndsp", "xstndmc", ...) or
     // nobody.
@@ -145,6 +155,7 @@ public:
     void clearShots();
 
     void music(int song);
+    int song() const { return song_; }
     void sound(int number);
     void setControl(bool on);
     void setFullView(bool on);
@@ -209,6 +220,7 @@ private:
     std::shared_ptr<const Bitmap> weaponLights_;
     away::Sprite title_;
     bool showTitle_ = false;
+    int song_ = -1;
     std::deque<Event> events_;
     std::optional<BridgeResult> result_;
 };

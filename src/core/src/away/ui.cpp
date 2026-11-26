@@ -8,6 +8,7 @@
 #include "helmsman/data/reader.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 
 namespace helmsman::away {
@@ -325,6 +326,93 @@ int textBox(Ui& ui, const std::vector<std::string>& lines, int x, int y, std::ui
     p.pointerTargets.clear();
     p.takeClicks();
     return choice;
+}
+
+std::optional<std::string> textInput(Ui& ui, const std::string& prompt, int x, int y, int maxLength, std::uint8_t colour) {
+    Platform& p = ui.session.platform;
+    static const std::string kTurn = "0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ ";
+    constexpr int kColumns = 26;
+    const int rows = 6;
+    const int left = std::clamp(x - kColumns * 4, 1, 319 - kColumns * 8);
+    const int top = std::clamp(y - rows * 4, 1, 199 - rows * 8);
+    Sprite box;
+    box.mode = SpriteMode::Text;
+    box.columns = kColumns;
+    box.x = left;
+    box.y = top;
+    box.depth = 15;
+    box.order = 8;
+    box.textColour = colour;
+    std::string typed;
+    maxLength = std::clamp(maxLength, 1, kColumns - 3);
+    p.takeClicks();
+    p.keys.clear();
+    std::optional<std::string> result;
+    bool done = false;
+    std::uint64_t blink = 0;
+    while (!done && !p.quit) {
+        box.text.assign(static_cast<std::size_t>(kColumns * rows), ' ');
+        auto put = [&](int r, int c, std::uint8_t ch) { box.text[static_cast<std::size_t>(r * kColumns + c)] = ch; };
+        for (int r = 0; r < rows; ++r) {
+            put(r, 0, 0x13);
+            put(r, kColumns - 1, 0x14);
+        }
+        for (int c = 1; c < kColumns - 1; ++c) {
+            put(0, c, 0x11);
+            put(rows - 1, c, 0x16);
+        }
+        put(0, 0, 0x10);
+        put(0, kColumns - 1, 0x12);
+        put(rows - 1, 0, 0x15);
+        put(rows - 1, kColumns - 1, 0x17);
+        for (std::size_t i = 0; i < prompt.size() && i < static_cast<std::size_t>(kColumns - 2); ++i) {
+            put(1, 1 + static_cast<int>(i), static_cast<std::uint8_t>(prompt[i]));
+        }
+        for (int c = 1; c < kColumns - 1; ++c) {
+            put(2, c, 0x19);
+        }
+        for (std::size_t i = 0; i < typed.size(); ++i) {
+            put(3, 2 + static_cast<int>(i), static_cast<std::uint8_t>(typed[i]));
+        }
+        if ((++blink / 4) % 2 == 0) {
+            put(3, 2 + static_cast<int>(typed.size()), '_');
+        }
+        ui.redraw();
+        ui.scene.drawSprite(p.screen, box);
+        ui.session.waitTick();
+        p.takeClicks();
+        while (!p.keys.empty()) {
+            const KeyPress key = p.keys.front();
+            p.keys.pop_front();
+            if (key.scancode == scancode::kEnter) {
+                result = typed;
+                done = true;
+            } else if (key.scancode == scancode::kEscape) {
+                done = true;
+            } else if (key.scancode == scancode::kBackspace || key.scancode == scancode::kLeft) {
+                if (!typed.empty()) {
+                    typed.pop_back();
+                }
+            } else if (key.scancode == scancode::kUp || key.scancode == scancode::kDown) {
+                if (typed.empty()) {
+                    typed.push_back(kTurn[0]);
+                } else {
+                    const auto at = kTurn.find(static_cast<char>(std::toupper(static_cast<unsigned char>(typed.back()))));
+                    const std::size_t n = kTurn.size();
+                    const std::size_t i = at == std::string::npos ? 0 : at;
+                    typed.back() = kTurn[(key.scancode == scancode::kUp ? i + 1 : i + n - 1) % n];
+                }
+            } else if (key.scancode == scancode::kRight) {
+                if (static_cast<int>(typed.size()) < maxLength) {
+                    typed.push_back(kTurn[0]);
+                }
+            } else if (key.text >= 0x20 && key.text < 0x7F && static_cast<int>(typed.size()) < maxLength) {
+                typed.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(key.text))));
+            }
+        }
+    }
+    p.takeClicks();
+    return result;
 }
 
 // A row of picture buttons from a menu file (.MNU: name, x, y, value),

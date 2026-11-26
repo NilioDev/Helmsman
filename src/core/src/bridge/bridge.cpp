@@ -154,6 +154,7 @@ void Bridge::report(int event, int what, bool player) {
 }
 
 void Bridge::music(int song) {
+    song_ = song;
     if (song < 0) {
         session_.stopMusic();
         return;
@@ -221,6 +222,44 @@ int Bridge::comm(const std::string& picture, const std::string& name, const std:
     const int r = sayAs(name, words, 0xA0, 0xBE, 0x2C);
     hideComm();
     return r;
+}
+
+int Bridge::choose(const std::vector<int>& lines) {
+    std::vector<std::string> box{kSpeakers[kKirk].name};
+    for (const int l : lines) {
+        box.push_back(text(l));
+    }
+    away::Ui u = ui();
+    const int r = away::textBox(u, box, 0xA0, 0x82, 0xB0);
+    away::setPointer(session_, control_ ? (space_.player().weaponsArmed ? "cursor" : "entcur") : "pushbtn");
+    return r;
+}
+
+std::string Bridge::enterCode() {
+    away::Ui u = ui();
+    const auto typed = away::textInput(u, "Code:", 0xA0, 0x64, 20);
+    away::setPointer(session_, control_ ? (space_.player().weaponsArmed ? "cursor" : "entcur") : "pushbtn");
+    return typed.value_or(std::string{});
+}
+
+void Bridge::approach(int still) {
+    static constexpr const char* kStills[8] = {"", "", "", "", "ark7", "derelict", "masada", "republic"};
+    removeStill();
+    const int i = space_.addStill(kStills[std::clamp(still, 4, 7)], space::Vec{-300, -150, 1600});
+    if (i >= 0) {
+        space_.object(i).size = 0xFA;
+        space_.object(i).scale = 2;
+        space_.object(i).axes = space_.player().axes;
+    }
+    orbit(true, false);
+}
+
+void Bridge::removeStill() {
+    for (int i = space::Space::kFirstStill; i < space::Space::kFirstStill + space::Space::kStills; ++i) {
+        if (space_.object(i).kind == space::Kind::Still) {
+            space_.remove(i);
+        }
+    }
 }
 
 void Bridge::resetShip() {
@@ -713,7 +752,7 @@ void Bridge::simulate() {
 }
 
 void Bridge::advance() {
-    post({kTick});
+    post({kTick, static_cast<int>(voyage_.clock)});
     ++voyage_.clock;
     while (!events_.empty() && !result_) {
         const Event e = events_.front();
@@ -1138,7 +1177,7 @@ BridgeResult Bridge::run() {
         }
         session_.waitTick();
         p.pointerShown = !voyage_.flyby;
-        post({kTick});
+        post({kTick, static_cast<int>(voyage_.clock)});
         ++voyage_.clock;
         handleInput();
         while (!events_.empty() && !result_) {

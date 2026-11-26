@@ -230,7 +230,7 @@ int Space::addStill(const std::string& name, Vec where) {
         s.stillName = name;
         s.size = 150;
         s.scale = 3;
-        s.pos = player().pos + where;
+        s.pos = player().pos + applyTransposed(player().axes, where);
         return i;
     }
     return -1;

@@ -18,9 +18,6 @@ void missionEvent(Bridge& b, const Event& e) {
 }
 
 // Not written yet: the bridge as it always is.
-void tugEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
-void loveEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
-void muddEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
 void featherEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
 void trialEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
 void sinsEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
