@@ -393,6 +393,13 @@ private:
     std::uint64_t fadeTick_ = 0;
     Colour fadeColour_{};
     void fadeTo(int target, bool wait);
+    struct Ban {
+        std::vector<std::uint8_t> data;
+        std::size_t pos = 0;
+    };
+    std::vector<Ban> bans_;
+    void stepRoomClock();
+    void stepBan(Ban& ban);
     // A panel of buttons a room puts up (a puzzle): its menu and where.
     std::vector<MenuButton> panel_;
     int panelX_ = 0;

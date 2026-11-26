@@ -602,6 +602,13 @@ void Game::advanceBodies() {
 }
 
 void Game::awayFrame() {
+    drawAway();
+    present();
+}
+
+// What goes on by itself with the clock, whatever the game waits for: the
+// fades, and the room's background animations.
+void Game::stepRoomClock() {
     if (fadeTick_ > awayTicks_) {
         fadeTick_ = awayTicks_;
     }
@@ -611,9 +618,58 @@ void Game::awayFrame() {
         } else if (fade_ > fadeTarget_) {
             fade_ = std::max(fadeTarget_, fade_ - 10);
         }
+        for (auto& ban : bans_) {
+            stepBan(ban);
+        }
     }
-    drawAway();
-    present();
+}
+
+// One picture of a background animation (.BAN), drawn into the room's
+// picture where it stays: a screen offset to start at (0xFFFF: the end, back
+// to the first), a count of steps, the rectangle it changes (four words) and
+// the steps. A step byte n below 0x80 is n + 1 pixels that follow, above
+// 0x80 one pixel repeated 257 - n times; colour 0 leaves the pixel as it is.
+// 0x80 and a word moves on that many pixels.
+void Game::stepBan(Ban& ban) {
+    const auto& d = ban.data;
+    auto word = [&](std::size_t at) -> int {
+        return at + 1 < d.size() ? d[at] | (d[at + 1] << 8) : 0xFFFF;
+    };
+    if (word(ban.pos) == 0xFFFF) {
+        ban.pos = 0;
+    }
+    if (word(ban.pos) == 0xFFFF || ban.pos + 12 > d.size()) {
+        ban.pos = d.size(); // nothing (more) to show
+        return;
+    }
+    std::size_t to = static_cast<std::size_t>(word(ban.pos));
+    int steps = word(ban.pos + 2);
+    std::size_t at = ban.pos + 12;
+    std::uint8_t* pixels = scene_.backdrop.data();
+    constexpr std::size_t kPixels = 320 * 200;
+    auto put = [&](std::uint8_t c) {
+        if (c != 0 && to < kPixels) {
+            pixels[to] = c;
+        }
+        ++to;
+    };
+    for (; steps > 0 && at < d.size(); --steps) {
+        const std::uint8_t op = d[at++];
+        if (op < 0x80) {
+            for (int i = 0; i <= op && at < d.size(); ++i) {
+                put(d[at++]);
+            }
+        } else if (op == 0x80) {
+            to += static_cast<std::size_t>(word(at));
+            at += 2;
+        } else if (at < d.size()) {
+            const std::uint8_t c = d[at++];
+            for (int i = 0; i < 257 - op; ++i) {
+                put(c);
+            }
+        }
+    }
+    ban.pos = at;
 }
 
 // --- A room's panel of buttons ---------------------------------------------------
@@ -986,6 +1042,23 @@ void Game::loadRoom(int number, bool first, bool restoring) {
         pushHandlers(0, m_.word(Machine::kRoom, room::kLists), 0);
     }
     loadWalkMap(name);
+    // The room's background animations.
+    bans_.clear();
+    {
+        std::uint16_t at = m_.word(Machine::kRoom, room::kBans);
+        const std::uint16_t end = m_.word(Machine::kRoom, static_cast<std::uint16_t>(room::kBans + 2));
+        while (at < end && bans_.size() < 16) {
+            const std::string ban = m_.scriptText(Machine::kRoom, at, 16);
+            at = static_cast<std::uint16_t>(at + ban.size() + 1);
+            if (ban.empty()) {
+                continue;
+            }
+            if (auto data = file(ban + ".BAN")) {
+                bans_.push_back(Ban{std::move(*data), 0});
+            }
+        }
+    }
+    fadeTick_ = awayTicks_;
 
     for (auto& b : bodies_) {
         b = Body{};
@@ -1108,6 +1181,7 @@ void Game::enterRoom(int spawn) {
 }
 
 void Game::drawAway() {
+    stepRoomClock();
     std::vector<const away::Sprite*> sprites;
     for (int i = 0; i < 32; ++i) {
         const Body& b = bodies_[i];
