@@ -18,10 +18,6 @@ void missionEvent(Bridge& b, const Event& e) {
 }
 
 // Not written yet: the bridge as it always is.
-void featherEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
-void trialEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
-void sinsEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
-void vengEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
 void startEncounter(Bridge&) {}
 void encounterEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
 

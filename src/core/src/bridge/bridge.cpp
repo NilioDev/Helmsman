@@ -225,10 +225,16 @@ int Bridge::comm(const std::string& picture, const std::string& name, const std:
 }
 
 int Bridge::choose(const std::vector<int>& lines) {
-    std::vector<std::string> box{kSpeakers[kKirk].name};
+    std::vector<std::string> words;
     for (const int l : lines) {
-        box.push_back(text(l));
+        words.push_back(text(l));
     }
+    return chooseWords(words);
+}
+
+int Bridge::chooseWords(const std::vector<std::string>& words) {
+    std::vector<std::string> box{kSpeakers[kKirk].name};
+    box.insert(box.end(), words.begin(), words.end());
     away::Ui u = ui();
     const int r = away::textBox(u, box, 0xA0, 0x82, 0xB0);
     away::setPointer(session_, control_ ? (space_.player().weaponsArmed ? "cursor" : "entcur") : "pushbtn");
@@ -297,6 +303,50 @@ void Bridge::orbit(bool enter, bool announce) {
     }
 }
 
+// A report's text has the voices of two numbers and the numbers themselves
+// to fill in: "%s" the voices, "%d" the numbers, in that order.
+std::string Bridge::fillReport(const std::string& format, int first, int second) {
+    std::string report;
+    const std::string v1 = numberVoices(first);
+    const std::string v2 = numberVoices(second);
+    int strings = 0;
+    int numbers = 0;
+    for (std::size_t i = 0; i < format.size(); ++i) {
+        const char c = format[i];
+        if (c == '%' && i + 1 < format.size()) {
+            const char k = format[i + 1];
+            if (k == 's') {
+                report += strings++ == 0 ? v1 : v2;
+                ++i;
+                continue;
+            }
+            if (k == 'd') {
+                report += std::to_string(numbers++ == 0 ? first : second);
+                ++i;
+                continue;
+            }
+            if (k == '%') {
+                report += '%';
+                ++i;
+                continue;
+            }
+        }
+        report += c;
+    }
+    return report;
+}
+
+int Bridge::yearReview(int textIndex) {
+    int total = 0;
+    for (int i = 0; i < 7; ++i) {
+        total += std::max(voyage_.commendations[static_cast<std::size_t>(i)], 0);
+    }
+    // Four commendations for each of the seven scores is perfect.
+    const int percent = std::clamp(total * 100 / 28, 0, 100);
+    sayAs("Admiral", fillReport(text(textIndex), percent, 0), 0xA0, 0xBE, 0x2C);
+    return percent;
+}
+
 void Bridge::score(int mission, int textIndex, int got, int best) {
     // The share of the best possible, and what it is worth.
     int percent = 0;
@@ -324,44 +374,13 @@ void Bridge::score(int mission, int textIndex, int got, int best) {
         verdict = "#BRID\\B_197#A satisfactory performance, Captain, but there's still room for improvement.";
     }
     music(song);
-    // The report's text has the voices of the two numbers and the numbers
-    // themselves to fill in.
-    const std::string format = text(textIndex);
-    std::string report;
-    {
-        const std::string v1 = numberVoices(percent);
-        const std::string v2 = numberVoices(commendations);
-        std::size_t used = 0;
-        int strings = 0;
-        int numbers = 0;
-        for (std::size_t i = 0; i < format.size(); ++i) {
-            const char c = format[i];
-            if (c == '%' && i + 1 < format.size()) {
-                const char k = format[i + 1];
-                if (k == 's') {
-                    report += strings++ == 0 ? v1 : v2;
-                    ++i;
-                    continue;
-                }
-                if (k == 'd') {
-                    report += std::to_string(numbers++ == 0 ? percent : commendations);
-                    ++i;
-                    continue;
-                }
-                if (k == '%') {
-                    report += '%';
-                    ++i;
-                    continue;
-                }
-            }
-            report += c;
-            ++used;
-        }
-    }
+    const std::string report = fillReport(text(textIndex), percent, commendations);
     showComm("woman");
     sayAs("Admiral", report, 0xA0, 0xBE, 0x2C);
     sayAs("Admiral", verdict, 0xA0, 0xBE, 0x2C);
-    if (mission != kVeng) {
+    // Scores are numbered 0..6: the fifth and sixth missions share one,
+    // so the last mission's is 6. After it the Admiral stays on screen.
+    if (mission != 6) {
         hideComm();
     }
     voyage_.lastScored = mission;

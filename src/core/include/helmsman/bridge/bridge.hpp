@@ -82,6 +82,7 @@ enum class Leave {
     LoadSave,
     BeamDown,
     GameOver,
+    Ending, // the last mission is done
 };
 
 struct BridgeResult {
@@ -129,6 +130,8 @@ public:
     // Kirk picks what to say from lines of the mission's text; gives the
     // place of the line picked.
     int choose(const std::vector<int>& lines);
+    // The same with the words given.
+    int chooseWords(const std::vector<std::string>& words);
     // The player types a code; empty when cancelled.
     std::string enterCode();
     // A ship that only drifts (4 "ark7", 5 "derelict", 6 "masada",
@@ -147,8 +150,12 @@ public:
     void flyby(const std::string& title, const std::string& voice, int stage);
     // Enters or leaves standard orbit around the planet here.
     void orbit(bool enter, bool announce);
-    // Starfleet's verdict on a mission: `got` of `best` points.
+    // Starfleet's verdict on a mission: `got` of `best` points. `mission`
+    // is the score's number, 0..6: the fifth and sixth missions share 4.
     void score(int mission, int textIndex, int got, int best);
+    // The last mission's review of the whole year, said by the Admiral on
+    // the comm screen; gives the year's share of the best, in percent.
+    int yearReview(int textIndex);
     // The ship's shields and weapons down, and its parts as good as new.
     void resetShip();
     // Removes every torpedo and blast from space.
@@ -160,6 +167,8 @@ public:
     void setControl(bool on);
     void setFullView(bool on);
     void beamDown() { result_ = BridgeResult{Leave::BeamDown, -1}; }
+    // The last mission is over: on to the closing titles.
+    void endGame() { result_ = BridgeResult{Leave::Ending, -1}; }
 
     // True while the ship is in orbit around a planet (and does not fly).
     bool inOrbit() const { return voyage_.inOrbit; }
@@ -194,6 +203,7 @@ private:
     void drawHud();
     void drawShipPanels(const space::Object& ship);
     void drawRadar();
+    std::string fillReport(const std::string& format, int first, int second);
     void panelPicture(const std::string& name, bool opaque, int recolour = -1);
     void setZoom(int zoom);
     void report(int event, int what, bool player);
