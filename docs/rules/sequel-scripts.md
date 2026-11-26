@@ -69,16 +69,30 @@ The space script's commands are numbered 0 to 0x3A. Those known so far:
 | Command | Meaning |
 |---------|---------|
 | 0 | the episode's title sequence; then to the bridge |
+| 1 `name, count` | ships join the fight (see [sequel-space.md](sequel-space.md)) |
+| 2 `name, count` | a wave of ships: more come as long as some are left |
 | 3 `n` | mark ship `n` as done |
 | 4 `n` | whether ship `n` (−2: our own) has lost more than half its hull |
+| 5 `n` | whether ship `n`'s shields are below two thirds |
+| 6 `n` | a still object (a station, a wreck) leaves space |
 | 7 | the closing titles and the end of the game |
+| 8 `name, song` | who is on the viewscreen ("tlk" before the name: they talk), and a song to play, −1 for none |
+| 9, 0x0A | the viewscreen on, off |
 | 0x0C `n` | sets `DS:C22A` |
+| 0x0F `n` | the ship is in star system `n` at once |
+| 0x10 | full speed ahead |
+| 0x11 `who, anim, x, y, wait` | someone on the bridge does something |
+| 0x13 `shown` | the admiral's rating of the episode (see [sequel-space.md](sequel-space.md)) |
 | 0x17 `n` | Pause for `n` (0: 1) |
 | 0x18 | BeginEventLoop: wait for events on the bridge |
 | 0x19 `beam, room, spawn` | OffShipAdventure: go down to a room (state 3 when `beam` is 0, else straight to state 2) |
 | 0x1A | the episode is over |
 | 0x1B `lo, hi` | a random number from `lo` to `hi` |
-| 0x1C `song, a, b` | music |
+| 0x1C `n, volume, pan` | sound effect `n` (see [sequel-sound.md](sequel-sound.md)) |
+| 0x1D `now, background` | music (see [sequel-sound.md](sequel-sound.md)) |
+| 0x2A | the game-over menu |
+| 0x2B, 0x2C | shields up, weapons armed |
+| 0x2E `name` | the bridge's colours from `NAME.PAL` (the lights go out) |
 | 0x33 `name` | checkpoint: the game is saved as `name` (the original writes `NAME.SAV`), with `DS:4FF8` set to 0 first; the script goes on at the next step, as after a Pause of 1 |
 | 0x34 `name, code` | back to the checkpoint `name`; `DS:4FF8` is then `code` |
 | 0x35 | `DS:4FF8`: 0 after a checkpoint is just made, the code it was come back to with otherwise (the script replays the episode's start when not 0) |

@@ -320,6 +320,9 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
             c.arg(0) == 0xFFFF && c.arg(1) == 0xFFFF ? -1 : static_cast<std::int32_t>(pack(c.arg(0), c.arg(1)) & 0x7FFFFFFF);
         return static_cast<std::uint16_t>(pollPanel(ticks));
     }
+    case 0x21: // the library computer
+        libraryComputer();
+        return 0;
     case 0x22: // held: a person stays put
         if (valid(who(0))) {
             m_.set16(static_cast<std::uint16_t>(record(who(0)) + rec::kHeld), c.arg(1));

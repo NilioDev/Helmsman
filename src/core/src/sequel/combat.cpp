@@ -482,6 +482,7 @@ bool Game::combatKey(const KeyPress& k) {
     case scancode::kTab: setManual(!manual); return true;
     case 0x11: bridgeButton(0x61); return true; // W: weapons
     case 0x12: bridgeButton(0x31); return true; // E: more power
+    case 0x13: bridgeButton(0x10); return true; // R: the captain's log
     case 0x14: bridgeButton(0x20); return true; // T: Spock
     case 0x17: bridgeButton(0x12); return true; // I: the options
     case 0x18: bridgeButton(0x51); return true; // O: orbit
@@ -491,6 +492,7 @@ bool Game::combatKey(const KeyPress& k) {
     case 0x23: bridgeButton(0x40); return true; // H: hail
     case 0x25: bridgeButton(0x00); return true; // K: Kirk
     case 0x26: bridgeButton(0x62); return true; // L: lock weapons on
+    case 0x2E: bridgeButton(0x21); return true; // C: the library computer
     case 0x2F: bridgeButton(0x03); return true; // V: the viewscreen
     case 0x30: bridgeButton(0x11); return true; // B: beam down
     case 0x31: bridgeButton(0x60); return true; // N: course

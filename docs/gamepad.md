@@ -27,6 +27,13 @@ moves the pointer to the middle of the nearest of these lying that way. A
 target counts as nearer the less it lies to the side. When nothing lies
 that way, the pointer stays.
 
+## Typing
+
+Where the game asks for a typed answer (the second game's library computer
+and a few puzzles), the letters are on the screen as keys: jump to one with
+the direction pad and click it. "Back" takes the last letter away and
+"Done" answers.
+
 ## Your own choices
 
 Put a file named `gamepad.txt` in Helmsman's settings folder:

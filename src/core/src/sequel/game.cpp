@@ -466,10 +466,13 @@ void Game::playVoice(const std::string& tag) {
         return;
     }
     std::optional<PlainSound> sound;
-    if (voices_ && voices_->has(tag)) {
-        try {
-            sound = voices_->sound(tag);
-        } catch (const FormatError&) {
+    const SoundBank* episodeBank = voices_ ? &*voices_ : nullptr;
+    for (const SoundBank* bank : {computerVoices_, episodeBank}) {
+        if (!sound && bank != nullptr && bank->has(tag)) {
+            try {
+                sound = bank->sound(tag);
+            } catch (const FormatError&) {
+            }
         }
     }
     if (!sound) {
@@ -980,6 +983,15 @@ bool Game::handle(int offset) {
 void Game::bridgeButton(int id) {
     if (id == button::kKirkOptions) {
         optionsMenu();
+        return;
+    }
+    if (id == button::kKirkLog || id == button::kSpockComputer) {
+        HoldSpace hold(*this);
+        if (id == button::kKirkLog) {
+            captainsLog();
+        } else {
+            libraryComputer();
+        }
         return;
     }
     if (combatButton(id)) {

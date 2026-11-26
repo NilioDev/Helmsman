@@ -88,9 +88,11 @@ constexpr int kChoiceSpeaker = -2;
 
 // The bridge's own events (the button numbers of the crew's menus).
 namespace button {
+constexpr int kKirkLog = 0x10;
 constexpr int kKirkBeam = 0x11;
 constexpr int kKirkOptions = 0x12;
 constexpr int kSpockReport = 0x20;
+constexpr int kSpockComputer = 0x21;
 constexpr int kUhuraHail = 0x40;
 constexpr int kSuluOrbit = 0x51;
 constexpr int kChekovCourse = 0x60;
@@ -484,7 +486,11 @@ private:
     int wantSong_ = -1;
     int backgroundSong_ = -1;
     std::function<void(Platform&)> previousWait_;
-    int askText();
+    std::string askText(const std::string& prompt = {});
+    // The library computer (computer.cpp).
+    void libraryComputer();
+    void captainsLog();
+    const SoundBank* computerVoices_ = nullptr; // while the computer speaks
 
     std::shared_ptr<const Bitmap> scaledPicture(const std::string& name, int scale);
     std::map<std::pair<std::string, int>, std::shared_ptr<const Bitmap>> scaled_;

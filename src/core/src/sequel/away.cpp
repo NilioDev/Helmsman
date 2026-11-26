@@ -1578,30 +1578,114 @@ int Game::sayRoom(std::uint16_t at) {
     return say(who, texts, seg);
 }
 
-int Game::askText() {
-    // A typed answer: the keys typed until Enter.
+// A typed answer: the keys typed until Enter (Escape gives nothing back).
+// `prompt`, when given, is shown above it. Letters on the screen can be
+// clicked as well, so a gamepad (or the mouse alone) can answer too.
+std::string Game::askText(const std::string& prompt) {
+    static constexpr const char* kRows[] = {"ABCDEFGHIJKLM", "NOPQRSTUVWXYZ", "0123456789-' "};
+    constexpr int kCell = 14;
+    constexpr int kColumns = 13;
+    constexpr int kBack = -2; // the key that takes a letter back
+    constexpr int kDone = -3; // the key that answers
     std::string typed;
     p_.keys.clear();
+    p_.takeClicks();
+    const int w = std::max(30 * SequelFont::kWidth, kColumns * kCell) + 12;
+    const int x = (320 - w) / 2;
+    const int rows = prompt.empty() ? 1 : 2;
+    const int keysY = 6 + rows * SequelFont::kHeight + 4;
+    const int h = keysY + 4 * kCell + 6;
+    const int y = std::max(2, 100 - h / 2);
+    // The keys: each letter, then "back" and "done" side by side.
+    struct Key {
+        ClipRect r;
+        int c;
+        std::string label;
+    };
+    std::vector<Key> keys;
+    const int kx = x + (w - kColumns * kCell) / 2;
+    for (int r = 0; r < 3; ++r) {
+        for (int i = 0; i < kColumns; ++i) {
+            const int cx = kx + i * kCell;
+            const int cy = y + keysY + r * kCell;
+            const char ch = kRows[r][i];
+            keys.push_back(Key{ClipRect{cx, cy, cx + kCell - 2, cy + kCell - 2}, ch, ch == ' ' ? "_" : std::string(1, ch)});
+        }
+    }
+    const int by = y + keysY + 3 * kCell + 2;
+    const int half = kColumns * kCell / 2;
+    keys.push_back(Key{ClipRect{kx, by, kx + half - 3, by + kCell - 2}, kBack, "Back"});
+    keys.push_back(Key{ClipRect{kx + half, by, kx + 2 * half - 2, by + kCell - 2}, kDone, "Done"});
+    auto add = [&](int c) {
+        if (c == kBack) {
+            if (!typed.empty()) {
+                typed.pop_back();
+            }
+        } else if (c >= 32 && c < 127 && typed.size() < 29) {
+            typed.push_back(static_cast<char>(c));
+        }
+    };
     while (!p_.quit) {
-        drawAway();
-        const int w = 30 * SequelFont::kWidth + 12;
-        const int x = (320 - w) / 2;
-        const int y = 80;
-        for (int yy = y; yy < y + 22; ++yy) {
+        if (away_) {
+            drawAway();
+        } else {
+            drawBridge();
+        }
+        for (int yy = y; yy < y + h; ++yy) {
             for (int xx = x; xx < x + w; ++xx) {
                 p_.screen.set(xx, yy, shade_[p_.screen.at(xx, yy)]);
             }
         }
-        font_.drawText(p_.screen, x + 6, y + 6, typed + "_", 0);
+        int ty = y + 6;
+        if (!prompt.empty()) {
+            font_.drawText(p_.screen, x + 6, ty, prompt, 0);
+            ty += SequelFont::kHeight;
+        }
+        font_.drawText(p_.screen, x + 6, ty, typed + "_", 0);
+        p_.pointerTargets.clear();
+        int hover = -1;
+        for (std::size_t i = 0; i < keys.size(); ++i) {
+            const Key& k = keys[i];
+            const bool over = p_.mouseX >= k.r.left && p_.mouseX <= k.r.right && p_.mouseY >= k.r.top && p_.mouseY <= k.r.bottom;
+            if (over) {
+                hover = static_cast<int>(i);
+            }
+            const std::uint8_t edge = over ? 15 : 8;
+            for (int xx = k.r.left; xx <= k.r.right; ++xx) {
+                p_.screen.set(xx, k.r.top, edge);
+                p_.screen.set(xx, k.r.bottom, edge);
+            }
+            for (int yy = k.r.top; yy <= k.r.bottom; ++yy) {
+                p_.screen.set(k.r.left, yy, edge);
+                p_.screen.set(k.r.right, yy, edge);
+            }
+            const int lw = static_cast<int>(k.label.size()) * SequelFont::kWidth;
+            font_.drawText(p_.screen, (k.r.left + k.r.right + 1 - lw) / 2 + 1, k.r.top + 2, k.label, over ? 1 : 0);
+            p_.pointerTargets.push_back(k.r);
+        }
         present();
         bool done = false;
+        const auto clicks = p_.takeClicks();
+        if ((clicks & 1) != 0 && hover >= 0) {
+            const int c = keys[static_cast<std::size_t>(hover)].c;
+            if (c == kDone) {
+                done = true;
+            } else {
+                add(c);
+            }
+        } else if ((clicks & 2) != 0) {
+            add(kBack);
+        }
         for (const auto& k : p_.keys) {
             if (k.scancode == scancode::kEnter) {
                 done = true;
-            } else if (k.scancode == scancode::kBackspace && !typed.empty()) {
-                typed.pop_back();
-            } else if (k.text >= 32 && k.text < 127 && typed.size() < 29) {
-                typed.push_back(static_cast<char>(k.text));
+            } else if (k.scancode == scancode::kEscape) {
+                typed.clear();
+                done = true;
+            } else if (k.scancode == scancode::kBackspace) {
+                add(kBack);
+            } else if (k.text >= 32 && k.text < 127) {
+                add(k.text);
             }
         }
         p_.keys.clear();
@@ -1609,8 +1693,9 @@ int Game::askText() {
             break;
         }
     }
+    p_.pointerTargets.clear();
     typedText_ = typed;
-    return 0;
+    return typed;
 }
 
 } // namespace helmsman::sequel::detail
