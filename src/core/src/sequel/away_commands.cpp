@@ -45,6 +45,9 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
     const auto seg = currentSeg_;
     auto who = [&](int i) { return c.sarg(i); };
     auto valid = [](int n) { return n >= 0 && n < 32; };
+    if (explore_) {
+        exploreCalled(c.function);
+    }
     if (p_.devTrace) {
         std::fprintf(stderr, "  room %02x (%d %d %d %d %d)\n", c.function, c.sarg(0), c.sarg(1), c.sarg(2), c.sarg(3), c.sarg(4));
     }
@@ -95,9 +98,11 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
     case 0x05: // the team gets an item
         m_.set8(static_cast<std::uint16_t>(kItems + 10 * (c.arg(0) & 0x7F)), 1);
         return 0;
-    case 0x06: // to another room
-        if (busy_) {
-            return 0;
+    case 0x06: // to another room, unless one of the team is held up
+        for (int i = 0; i < 32; ++i) {
+            if ((rec8(i, rec::kTeam) & 0x06) == 0x06) {
+                return 0;
+            }
         }
         throw ChangeRoom{c.sarg(0), c.sarg(1)};
     case 0x07: // the team loses an item
@@ -231,8 +236,20 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         gameOverMenu();
         return 0;
     case 0x15: { // a typed answer, against a list of words
-        askText();
         std::uint16_t at = c.arg(0);
+        if (explore_) {
+            // The explorer answers with one of the words, or none of them.
+            int words = 0;
+            for (std::uint16_t w = at; words < 16; ++words) {
+                const std::string word = m_.scriptText(seg, w, 30);
+                if (word.empty()) {
+                    break;
+                }
+                w = static_cast<std::uint16_t>(w + word.size() + 1);
+            }
+            return static_cast<std::uint32_t>(exploreChoice(words + 1));
+        }
+        askText();
         int index = 1;
         for (int guard = 0; guard < 16; ++guard) {
             const std::string word = m_.scriptText(seg, at, 30);
@@ -378,13 +395,13 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
             return 0xFB;
         }
     }
-    case 0x2A: { // a person's team flags: those in the mask take the value
+    case 0x2A: { // a person's team flags: those to set, those to clear (in both: they change)
         if (!valid(who(0))) {
             return 0;
         }
-        const auto mask = static_cast<std::uint8_t>(c.arg(1));
-        const auto value = static_cast<std::uint8_t>(c.arg(2));
-        const auto t = static_cast<std::uint8_t>((rec8(who(0), rec::kTeam) & ~mask) | (value & mask));
+        const auto set = static_cast<std::uint8_t>(c.arg(1));
+        const auto clear = static_cast<std::uint8_t>(c.arg(2));
+        const auto t = static_cast<std::uint8_t>((~(set ^ clear) & rec8(who(0), rec::kTeam)) ^ set);
         setRec8(who(0), rec::kTeam, t);
         const auto r = record(who(0));
         m_.set8(r, static_cast<std::uint8_t>((m_.u8(r) & ~0x08) | (t & 0x08)));
@@ -421,6 +438,11 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         p_.takeClicks();
         p_.keys.clear();
         int picked = -1;
+        if (explore_) {
+            // The explorer points at one of them, or elsewhere.
+            const int i = exploreChoice(count + 1);
+            return i < count ? m_.cpu.read16(seg, static_cast<std::uint16_t>(table + 4 * i)) : 0xFFFF;
+        }
         while (!p_.quit) {
             drawAway();
             const int over = thingAt(p_.mouseX, p_.mouseY);
@@ -479,6 +501,9 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         return 0;
     case 0x38: { // back to an episode's checkpoint: name, the code the script gets
         const std::string name = roomText(c.arg(0), 10);
+        if (explore_) {
+            exploreJump("back to the checkpoint");
+        }
         if (auto data = readCheckpoint(name)) {
             throw RestoreGame{std::move(*data), c.sarg(1)};
         }

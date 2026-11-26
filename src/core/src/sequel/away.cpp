@@ -300,6 +300,7 @@ int Game::startAnim(int who, std::string name, int x, int y, int scale) {
     if (who < 0 || who >= 32) {
         return -1;
     }
+    keepArrival(who);
     const auto r = record(who);
     if (x == -1) {
         x = m_.s16(static_cast<std::uint16_t>(r + rec::kX));
@@ -353,6 +354,17 @@ int Game::startAnim(int who, std::string name, int x, int y, int scale) {
     b.nextAt = awayTicks_ + static_cast<std::uint64_t>(std::max(1, b.frames->front().ticks));
     placeSprite(b);
     return who;
+}
+
+// Kirk's way into a room ends with the event that gives the player the
+// orders back. When a room's script takes him over on the way (a scene that
+// starts as the room opens), that event would never come and the player
+// could give no orders again: it comes at once instead.
+void Game::keepArrival(int who) {
+    if (who == kKirk && busy_ && rec8(who, rec::kCode) == kArrived) {
+        setRec8(who, rec::kCode, 0);
+        post(ev::kDone, kArrived);
+    }
 }
 
 // A person of the crew stands; anyone else leaves the room.
@@ -425,6 +437,7 @@ bool Game::walk(int who, int fx, int fy, int tx, int ty, int code) {
     if (fy == -1) {
         fy = m_.s16(static_cast<std::uint16_t>(r + rec::kY));
     }
+    keepArrival(who);
     Body& b = bodies_[who];
     if (rec8(who, rec::kLetter) == 0) {
         // Only the crew has walking pictures: others are put there.
@@ -723,6 +736,13 @@ int Game::pollPanel(std::int32_t ticks) {
     for (const auto& b : panel_) {
         anyId = anyId || b.id != 0;
     }
+    if (explore_ && !panel_.empty()) {
+        // The explorer presses a button, or (when the panel waits for a
+        // while only) none.
+        const int n = static_cast<int>(panel_.size());
+        const int i = exploreChoice(n + (ticks >= 0 ? 1 : 0));
+        return i >= n ? -1 : anyId ? panel_[static_cast<std::size_t>(i)].id : i;
+    }
     do {
         awayFrame();
         const auto clicks = p_.takeClicks();
@@ -883,6 +903,9 @@ bool Game::runList(int list, const std::uint8_t e[4], bool run) {
                     handled = true;
                 } else {
                     m_.set8(spot::kNotHandled, 0);
+                    if (p_.devTrace) {
+                        std::fprintf(stderr, " handler %02x %02x %02x %02x list %d kind %d\n", e[0], e[1], e[2], e[3], list, kind);
+                    }
                     const auto savedSeg = currentSeg_;
                     const int savedKind = currentKind_;
                     currentSeg_ = seg;
@@ -1176,6 +1199,9 @@ void Game::enterRoom(int spawn) {
 
 void Game::drawAway() {
     stepRoomClock();
+    if (explore_) {
+        return; // nobody looks
+    }
     std::vector<const away::Sprite*> sprites;
     for (int i = 0; i < 32; ++i) {
         const Body& b = bodies_[i];
@@ -1542,11 +1568,17 @@ void Game::awayMission() {
                 drawAway();
                 present();
                 awayInput();
+                if (explore_) {
+                    exploreIdle();
+                }
             }
         } catch (const ChangeRoom& c) {
             number = c.room;
             spawn = c.spawn;
-        } catch (const LeaveMission&) {
+        } catch (const LeaveMission& l) {
+            if (explore_ && !p_.quit) {
+                exploreEnd(l.state);
+            }
             return;
         }
     }

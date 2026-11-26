@@ -224,6 +224,9 @@ void Game::drawBridge() {
 }
 
 void Game::present() {
+    if (explore_) {
+        exploreFrame();
+    }
     tickSprites();
     p_.waitFrame();
     pumpTicks();
@@ -522,6 +525,15 @@ int Game::say(int who, const std::vector<std::string>& texts, std::uint16_t seg)
         by = 0x14;
     }
     const bool choice = texts.size() > 1 || menu;
+    if (explore_ && !menu) {
+        // The explorer reads nothing and picks an answer by itself.
+        if (p_.devTrace) {
+            for (const auto& t : texts) {
+                std::printf("  %s: %s\n", name.c_str(), t.c_str());
+            }
+        }
+        return choice ? exploreChoice(static_cast<int>(texts.size())) : 0;
+    }
     constexpr std::size_t kColumns = 30;
     constexpr int kRowsPerPage = 8;
 
@@ -1234,8 +1246,21 @@ bool Game::devStart() {
     std::istringstream in(p_.devStart);
     std::string first;
     in >> first;
+    if (first == "explore") {
+        // "explore episode room spawn most [orders to give first]"
+        std::string ep;
+        int room = 0;
+        int spawn = -1;
+        int most = 3000;
+        in >> ep >> room >> spawn >> most;
+        std::string path;
+        std::getline(in, path);
+        startExplorer(most, path);
+        devAwayMission(ep + " " + std::to_string(room) + " " + std::to_string(spawn));
+        return true;
+    }
     if (first != "space") {
-        devAwayMission();
+        devAwayMission(p_.devStart);
         return true;
     }
     std::string ep;
@@ -1256,8 +1281,8 @@ bool Game::devStart() {
     return false;
 }
 
-void Game::devAwayMission() {
-    std::istringstream in(p_.devStart);
+void Game::devAwayMission(const std::string& spec) {
+    std::istringstream in(spec);
     std::string ep;
     int room = 0;
     int spawn = -1;

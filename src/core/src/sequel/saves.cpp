@@ -339,6 +339,9 @@ bool Game::optionsMenu() {
 
 // A lost mission: load, start over or quit (room command 0x14).
 void Game::gameOverMenu() {
+    if (explore_) {
+        exploreJump("lost");
+    }
     const bool any = anySaves();
     std::vector<std::string> lines;
     if (any) {

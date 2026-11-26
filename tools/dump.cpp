@@ -678,8 +678,11 @@ int main(int argc, char** argv) {
             platform.saveFolder = outFolder + "/saves";
             int frame = 0;
             int release = -1;
+            // The second game's explorer looks at no pictures: two ticks a frame.
+            const char* startAt = std::getenv("HELMSMAN_START");
+            const int step = startAt != nullptr && std::string(startAt).rfind("explore", 0) == 0 ? 110 : 16;
             platform.onWait = [&](Platform& p) {
-                p.millis += 16;
+                p.millis += static_cast<std::uint64_t>(step);
                 ++frame;
                 // The sound plays away as on a real computer.
                 for (auto& q : p.soundQueued) {

@@ -264,6 +264,8 @@ struct MenuButton {
     int id = 0;
 };
 
+struct Explorer;
+
 class Game {
 public:
     Game(Platform& p, Assets& assets)
@@ -397,7 +399,16 @@ private:
     // How hard the fights are (0 none, 1 easy, 2 hard), as asked before a
     // new game; -1 as the new game's file has it.
     int combatLevel_ = -1;
-    void devAwayMission();
+    void devAwayMission(const std::string& spec);
+    // The explorer of the tools (explore.cpp).
+    std::shared_ptr<Explorer> explore_;
+    void startExplorer(int most, const std::string& path);
+    void exploreIdle();
+    void exploreFrame();
+    void exploreCalled(int function);
+    int exploreChoice(int count);
+    [[noreturn]] void exploreJump(const char* why);
+    void exploreEnd(int how);
     bool devStart();
     void episodes();
     std::optional<std::vector<std::uint8_t>> readCheckpoint(const std::string& name);
@@ -432,6 +443,7 @@ private:
     void setRec8(int who, std::uint16_t at, std::uint8_t v) { m_.set8(static_cast<std::uint16_t>(record(who) + at), v); }
     int startAnim(int who, std::string name, int x, int y, int scale);
     void stand(int who);
+    void keepArrival(int who);
     bool walk(int who, int fx, int fy, int tx, int ty, int code);
     void walkStep(Body& b, int who);
     void nextLeg(Body& b);
