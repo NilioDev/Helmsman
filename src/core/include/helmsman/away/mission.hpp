@@ -256,6 +256,7 @@ private:
     bool pointAt(int id, int& x, int& y) const;
     bool walkToObjectFirst();
     void checkTouches();
+    void recoverStunned();
     int chooseUseTarget();
     void selectAction(int action);
     void targetChosen(int object);

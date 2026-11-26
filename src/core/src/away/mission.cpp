@@ -19,6 +19,7 @@ namespace {
 // game (offsets from its start).
 namespace st {
 constexpr int kTimers = 0x00;        // eight words, counted down each tick
+constexpr int kStunned = 0x14;       // four words: how long each of the crew stays down
 constexpr int kMouseX = 0x10;
 constexpr int kMouseY = 0x12;
 constexpr int kNoWalking = 0x1C;
@@ -943,6 +944,10 @@ void Mission::defaultResponse(const Event& e) {
             return;
         }
         const int room = rdf16(0x22 + e.b1 * 2);
+        // 0xFFFF: a way out that leads nowhere unless the room's code says.
+        if (room >= 0x8000) {
+            return;
+        }
         pendingChange_ = RoomChange{room, e.b1 ^ 1};
         return;
     }
@@ -1234,9 +1239,55 @@ void Mission::tickOnce() {
             }
         }
     }
+    recoverStunned();
     ++frameTicks_;
     ++roomTicks_;
     post(kTick, static_cast<std::uint8_t>(roomTicks_ & 0xFF), static_cast<std::uint8_t>((roomTicks_ >> 8) & 0xFF));
+}
+
+// A crew member knocked down (their bit in the flags) lies there while
+// their count runs down, then gets up and can go on.
+void Mission::recoverStunned() {
+    const int down = var(st::kFlags);
+    if (down == 0) {
+        return;
+    }
+    for (int i = 0; i < 4; ++i) {
+        const int bit = 1 << i;
+        if ((down & bit) == 0) {
+            continue;
+        }
+        const auto left = static_cast<std::int16_t>(word(st::kStunned + i * 2) - 1);
+        setWord(st::kStunned + i * 2, static_cast<std::uint16_t>(left));
+        if (left > 0) {
+            continue;
+        }
+        Actor& a = actors_[static_cast<std::size_t>(i)];
+        // Facing the way the room asked for, or the way they lie.
+        const int facing = var(st::kCrewFacing + i);
+        char dir = static_cast<char>(std::tolower(static_cast<unsigned char>(a.dir)));
+        if (facing != 0xFF) {
+            dir = "nsew"[facing & 3];
+        }
+        int dx = 0;
+        int dy = 0;
+        if (dir == 'n') {
+            dx = -0x18;
+            dy = -8;
+        } else if (dir == 'w') {
+            dx = -0x23;
+            dy = -0x0C;
+        }
+        const int scale = scaleAt(a.y);
+        const int x = a.x + (scale * dx >> 8);
+        const int y = a.y + (scale * dy >> 8);
+        std::string name;
+        name += kCrewLetters[i];
+        name += "getu";
+        name += dir;
+        startAnim(i, name, x, y, scaleAt(y));
+        var(st::kFlags) = static_cast<std::uint8_t>(var(st::kFlags) & ~bit);
+    }
 }
 
 void Mission::drawFrame() {

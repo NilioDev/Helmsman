@@ -340,6 +340,9 @@ int main(int argc, char** argv) {
                     }
                 } catch (const StopRequested&) {
                     return false;
+                } catch (const std::exception& ex) {
+                    std::printf("FAILED (%s) at room %d after ", ex.what(), m.room());
+                    throw;
                 }
                 return true;
             };
@@ -394,6 +397,7 @@ int main(int argc, char** argv) {
             std::set<int> endings;
             int losses = 0;
             int stuck = 0;
+            int failures = 0;
             bool done = false;
             std::map<int, int> roomsSeen;
             while (!queue.empty() && tried < maxStates && !done) {
@@ -433,7 +437,15 @@ int main(int argc, char** argv) {
                             std::fprintf(stderr, "\n%s", m.describe().c_str());
                         }
                     }
-                    if (!play(e)) {
+                    bool played = false;
+                    try {
+                        played = play(e);
+                    } catch (const std::exception&) {
+                        std::printf("%s%s\n", node.path.c_str(), id);
+                        ++failures;
+                        continue;
+                    }
+                    if (!played) {
                         if (++stuck <= 10) {
                             std::printf("STUCK: %s%s\n", node.path.c_str(), id);
                         }
@@ -494,7 +506,7 @@ int main(int argc, char** argv) {
                 }
             }
             std::printf("%d tries, %zu endings, %.1f s restoring\n", tried, endings.size(), std::chrono::duration<double>(restoreTime).count());
-            std::printf("%zu states, %d lost, %d stuck; states by room:", seen.size(), losses, stuck);
+            std::printf("%zu states, %d lost, %d stuck, %d FAILED; states by room:", seen.size(), losses, stuck, failures);
             for (const auto& [room, n] : roomsSeen) {
                 std::printf(" %d:%d", room, n);
             }
