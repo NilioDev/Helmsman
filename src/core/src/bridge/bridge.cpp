@@ -9,6 +9,7 @@
 #include "helmsman/gfx/palette.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <numbers>
@@ -1021,6 +1022,12 @@ void Bridge::defaultAction(int action) {
         }
         break;
     }
+    case kCaptainsLog:
+        captainsLog();
+        break;
+    case kComputer:
+        computer();
+        break;
     case kSpockTalk:
         sayAt(kSpock, "#BRID\\B_155#Nothing to report, Captain.", 0x126, 0x6A, 0x2C);
         break;
@@ -1190,6 +1197,150 @@ void Bridge::starMap() {
     if (voyage_.system != voyage_.destination) {
         startEncounter(*this);
     }
+}
+
+void Bridge::captainsLog() {
+    static const char* const kTitles[] = {"Demon World",       "Hijacked",           "Love's Labor Jeopardized", "Another Fine Mess",
+                                          "Feathered Serpent", "That Old Devil Moon", "Vengeance"};
+    const int last = std::clamp(voyage_.lastScored, -1, 6);
+    if (last < 0) {
+        sayAs("Captain's Log", "#BRID\\C_007#No recent missions have been completed.", 0xA0, 0x82, 0xB0);
+        return;
+    }
+    auto points = [](int n) { return n == 1 ? std::string("1 point") : std::to_string(n) + " points"; };
+    int total = 0;
+    for (int i = last; i >= 0; --i) {
+        total += std::max(voyage_.commendations[static_cast<std::size_t>(i)], 0);
+    }
+    std::string log = "#BRID\\C_007#We have earned " + points(total) + " for the following recently completed missions:\n\n";
+    for (int i = last; i >= 0; --i) {
+        log += std::string(kTitles[i]) + ":  " + points(std::max(voyage_.commendations[static_cast<std::size_t>(i)], 0)) + ".\n\n";
+    }
+    sayAs("Captain's Log", log, 0xA0, 0x82, 0xB0);
+}
+
+namespace {
+
+std::string upperText(std::string s) {
+    for (char& c : s) {
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    }
+    return s;
+}
+
+// The library computer's entries: DB.KEY has a line for each, its file
+// ("file004") and then the words it is found by ("ARK7 ARK-7 Ark-7").
+struct ComputerEntry {
+    std::string file;
+    std::string words; // upper case, with a space before each word
+};
+
+std::vector<ComputerEntry> computerIndex(const Archive& archive) {
+    std::vector<ComputerEntry> entries;
+    const auto bytes = archive.load("DB.KEY");
+    if (!bytes) {
+        return entries;
+    }
+    std::string line;
+    auto finish = [&] {
+        const auto space = line.find(' ');
+        if (space != std::string::npos && space > 0 && space <= 8) {
+            entries.push_back({line.substr(0, space), upperText(line.substr(space))});
+        }
+        line.clear();
+    };
+    for (const std::uint8_t b : *bytes) {
+        if (b == '$' && line.empty()) {
+            break;
+        }
+        if (b == '\n') {
+            finish();
+        } else if (b != '\r' && b != 0x1A) {
+            line += static_cast<char>(b);
+        }
+    }
+    finish();
+    return entries;
+}
+
+// An entry's file: its title, then its voice, then the text. A single
+// line break only wraps; an empty line starts a new paragraph.
+std::string computerText(const Archive& archive, const std::string& file) {
+    const auto bytes = archive.load(upperText(file) + ".DB");
+    if (!bytes) {
+        return {};
+    }
+    std::vector<std::string> lines;
+    std::string line;
+    for (const std::uint8_t b : *bytes) {
+        if (b == '$' || b == 0) {
+            break;
+        }
+        if (b == '\n') {
+            lines.push_back(line);
+            line.clear();
+        } else if (b != '\r') {
+            line += static_cast<char>(b);
+        }
+    }
+    lines.push_back(line);
+    if (lines.empty()) {
+        return {};
+    }
+    std::string voice;
+    std::size_t first = 1;
+    if (lines.size() > 1 && !lines[1].empty() && lines[1][0] == '#') {
+        voice = lines[1];
+        first = 2;
+    }
+    std::string text = voice + lines[0] + "\n\n";
+    bool fresh = true;
+    for (std::size_t i = first; i < lines.size(); ++i) {
+        if (lines[i].empty()) {
+            if (!fresh) {
+                text += "\n\n";
+                fresh = true;
+            }
+            continue;
+        }
+        if (!fresh) {
+            text += ' ';
+        }
+        text += lines[i];
+        fresh = false;
+    }
+    return text;
+}
+
+} // namespace
+
+void Bridge::computer() {
+    const auto index = computerIndex(session_.archive);
+    away::Ui u = ui();
+    while (!session_.platform.quit) {
+        const auto typed = away::textInput(u, "Computer:", 0xA0, 0x64, 20);
+        if (!typed || typed->empty()) {
+            break;
+        }
+        std::vector<std::string> found = {"Computer"};
+        if (typed->size() > 2) {
+            const std::string wanted = " " + upperText(*typed);
+            for (const ComputerEntry& e : index) {
+                if (e.words.find(wanted) != std::string::npos && found.size() <= 16) {
+                    std::string text = computerText(session_.archive, e.file);
+                    if (!text.empty()) {
+                        found.push_back(std::move(text));
+                    }
+                }
+            }
+        }
+        if (found.size() == 1) {
+            sayAs("Spock", "#COMP\\COMPUNOT#Topic not available, Captain.", 0x126, 0x6A, 0x2C);
+            continue;
+        }
+        away::textBox(u, found, 0x14, 0x14, 0xB0);
+    }
+    away::setPointer(session_, control_ ? (space_.player().weaponsArmed ? "cursor" : "entcur") : "pushbtn");
 }
 
 void Bridge::saveState(SaveWriter& w) const { space_.save(w); }

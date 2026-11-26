@@ -22,13 +22,20 @@ std::vector<std::string> wrapWords(const std::string& text, int width) {
     std::string line;
     std::size_t i = 0;
     while (i < text.size()) {
+        if (text[i] == '\n') {
+            // A line break of its own; two make an empty line.
+            lines.push_back(line);
+            line.clear();
+            ++i;
+            continue;
+        }
         // The next word, with the spaces before it.
         std::size_t j = i;
         while (j < text.size() && text[j] == ' ') {
             ++j;
         }
         std::size_t k = j;
-        while (k < text.size() && text[k] != ' ') {
+        while (k < text.size() && text[k] != ' ' && text[k] != '\n') {
             ++k;
         }
         const std::string spaces = line.empty() ? std::string{} : text.substr(i, j - i);

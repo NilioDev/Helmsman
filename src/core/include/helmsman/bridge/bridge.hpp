@@ -215,6 +215,8 @@ private:
     void report(int event, int what, bool player);
     void starMap();
     void saveGame();
+    void captainsLog();
+    void computer();
     void shipLost();
     void transporterMenu();
     away::Ui ui();
