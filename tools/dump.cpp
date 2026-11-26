@@ -215,6 +215,19 @@ int main(int argc, char** argv) {
                     session.trace = std::getenv("HELMSMAN_TRACE") != nullptr;
                     away::Mission m(session, argv[3]);
                     m.loadRoom(room);
+                    // HELMSMAN_STATE=OFF=VAL,... sets bytes of the mission's
+                    // state first (hexadecimal).
+                    if (const char* preset = std::getenv("HELMSMAN_STATE")) {
+                        std::stringstream list(preset);
+                        std::string item;
+                        while (std::getline(list, item, ',')) {
+                            const auto eq = item.find('=');
+                            if (eq != std::string::npos) {
+                                m.setStateByte(std::stoi(item.substr(0, eq), nullptr, 16),
+                                               static_cast<std::uint8_t>(std::stoi(item.substr(eq + 1), nullptr, 16)));
+                            }
+                        }
+                    }
                     m.spawnCrew(0);
                     for (int i = 0; i < 60; ++i) {
                         m.advance();
@@ -256,8 +269,11 @@ int main(int argc, char** argv) {
                 }
                 if (frames % 25 == 0) {
                     p.keys.push_back(KeyPress{scancode::kEnter, 0});
-                    p.mouseX = static_cast<int>(rng() % 320);
-                    p.mouseY = static_cast<int>(rng() % 200);
+                    // Click somewhere only when a screen waits for it.
+                    if (frames > 100) {
+                        p.mouseX = static_cast<int>(rng() % 320);
+                        p.mouseY = static_cast<int>(rng() % 200);
+                    }
                     p.mouseButtons = 1;
                 } else if (frames % 25 == 1) {
                     p.mouseButtons = 0;
@@ -287,24 +303,93 @@ int main(int argc, char** argv) {
                 std::string k = std::to_string(m.room()) + ":";
                 const auto st = m.stateBytes();
                 k.append(st.begin() + 0x14, st.end());
+                k += m.actorsKey();
                 SaveWriter w;
                 session.save(w);
                 k.append(w.data.begin(), w.data.end());
                 (void)snap;
                 return k;
             };
+            // Plays one event (or 0xFE: just waits, for the room's timers)
+            // until things settle; false when the game hung.
+            const auto play = [&](const away::Event& e) {
+                frames = 0;
+                try {
+                    const int wait = e.action == 0xFE ? 400 : 300;
+                    if (e.action != 0xFE) {
+                        // Point at what the player would have clicked on.
+                        const bool onTarget = e.action == 2 && e.b2 != 0xFF;
+                        if (e.action >= 1 && e.action <= 5) {
+                            m.pointAtForTools(onTarget ? e.b2 : e.b1);
+                        }
+                        m.inject(e);
+                    }
+                    int quiet = 0;
+                    for (int i = 0; i < wait && !m.ended() && m.roomChangingTo() < 0; ++i) {
+                        m.advance(false);
+                        quiet = m.idle() ? quiet + 1 : 0;
+                        if (quiet >= 20 && e.action != 0xFE) {
+                            break;
+                        }
+                    }
+                    if (m.roomChangingTo() >= 0) {
+                        m.applyRoomChange();
+                        for (int i = 0; i < 80 && !m.ended() && m.roomChangingTo() < 0; ++i) {
+                            m.advance(false);
+                        }
+                    }
+                } catch (const StopRequested&) {
+                    return false;
+                }
+                return true;
+            };
+            // HELMSMAN_PATH="ROOM:AABBCCDD ..." plays one path, as explore
+            // prints them, with the trace on.
+            if (const char* path = std::getenv("HELMSMAN_PATH")) {
+                session.trace = true;
+                std::stringstream in(path);
+                std::string step;
+                while (in >> step) {
+                    const auto colon = step.find(':');
+                    const auto v = static_cast<std::uint32_t>(std::stoul(step.substr(colon + 1), nullptr, 16));
+                    const away::Event e{static_cast<std::uint8_t>(v >> 24), static_cast<std::uint8_t>(v >> 16),
+                                        static_cast<std::uint8_t>(v >> 8), static_cast<std::uint8_t>(v)};
+                    std::fprintf(stderr, "=== %s (room %d)\n", step.c_str(), m.room());
+                    {
+                        const auto st = m.stateBytes();
+                        for (std::size_t i = 0; i < 0x30; ++i) {
+                            std::fprintf(stderr, "%02x ", st[i]);
+                        }
+                        std::fprintf(stderr, "\n%s", m.describe().c_str());
+                    }
+                    if (!play(e)) {
+                        std::fprintf(stderr, "hung\n");
+                    }
+                    if (std::getenv("HELMSMAN_RESAVE") != nullptr) {
+                        // Through a saved game after each step, as explore does.
+                        const auto snap = snapshot();
+                        SaveReader r(snap);
+                        session.restore(r);
+                        m.restore(r);
+                    }
+                }
+                std::fprintf(stderr, "now in room %d%s\n%s", m.room(), m.ended() ? ", ended" : "", m.describe().c_str());
+                return 0;
+            }
             struct Node {
                 std::vector<std::uint8_t> snap;
                 std::string path;
             };
             std::deque<Node> queue;
             std::set<std::string> seen;
+            std::set<int> valuesSeen;
             {
                 Node start{snapshot(), ""};
                 seen.insert(keyOf(start.snap));
                 queue.push_back(std::move(start));
             }
             int tried = 0;
+            const bool verbose = std::getenv("HELMSMAN_VERBOSE") != nullptr;
             std::chrono::steady_clock::duration restoreTime{};
             std::set<int> endings;
             int losses = 0;
@@ -338,30 +423,37 @@ int main(int argc, char** argv) {
                     frames = 0;
                     char id[32];
                     std::snprintf(id, sizeof id, "%d:%02x%02x%02x%02x ", m.room(), e.action, e.b1, e.b2, e.b3);
-                    try {
-                        // A made-up action 0xFE: just wait, for the room's
-                        // timers.
-                        const int wait = e.action == 0xFE ? 400 : 300;
-                        if (e.action != 0xFE) {
-                            m.inject(e);
-                        }
-                        int quiet = 0;
-                        for (int i = 0; i < wait && !m.ended() && m.roomChangingTo() < 0; ++i) {
-                            m.advance(false);
-                            quiet = m.idle() ? quiet + 1 : 0;
-                            if (quiet >= 20 && e.action != 0xFE) {
-                                break;
+                    if (const char* watch = std::getenv("HELMSMAN_TRACEPATH")) {
+                        session.trace = node.path + id == std::string(watch) + " ";
+                        if (session.trace) {
+                            const auto st = m.stateBytes();
+                            for (std::size_t i = 0; i < 0x30; ++i) {
+                                std::fprintf(stderr, "%02x ", st[i]);
                             }
+                            std::fprintf(stderr, "\n%s", m.describe().c_str());
                         }
-                        if (m.roomChangingTo() >= 0) {
-                            m.applyRoomChange();
-                            for (int i = 0; i < 80 && !m.ended() && m.roomChangingTo() < 0; ++i) {
-                                m.advance(false);
-                            }
+                    }
+                    if (!play(e)) {
+                        if (++stuck <= 10) {
+                            std::printf("STUCK: %s%s\n", node.path.c_str(), id);
                         }
-                    } catch (const StopRequested&) {
-                        ++stuck;
                         continue;
+                    }
+                    if (verbose) {
+                        std::printf("%s%s-> room %d%s%s |", node.path.c_str(), id, m.room(), m.lost() ? " lost" : "", m.ended() ? " ended" : "");
+                        const auto st = m.stateBytes();
+                        for (std::size_t i = 0x14; i < st.size(); ++i) {
+                            if (st[i] != 0) {
+                                std::printf(" %zx=%x", i, st[i]);
+                            }
+                        }
+                        SaveWriter sw;
+                        session.save(sw);
+                        std::size_t h = 0;
+                        for (auto b : sw.data) {
+                            h = h * 131 + b;
+                        }
+                        std::printf(" | %s | s%zx\n", m.actorsKey().c_str(), h);
                     }
                     if (m.lost()) {
                         ++losses;
@@ -380,7 +472,24 @@ int main(int argc, char** argv) {
                     Node next{snapshot(), node.path + id};
                     if (seen.insert(keyOf(next.snap)).second) {
                         ++roomsSeen[m.room()];
-                        queue.push_back(std::move(next));
+                        // A state that shows something never seen before (a
+                        // flag's value, an item, a room) is tried first.
+                        bool novel = false;
+                        const auto st = m.stateBytes();
+                        for (std::size_t i = 0x14; i < st.size(); ++i) {
+                            novel = valuesSeen.insert(static_cast<int>(i << 8 | st[i])).second || novel;
+                        }
+                        SaveWriter sw;
+                        session.save(sw);
+                        for (std::size_t i = 0; i < sw.data.size(); ++i) {
+                            novel = valuesSeen.insert(static_cast<int>((0x10000 + i) << 8 | sw.data[i])).second || novel;
+                        }
+                        novel = valuesSeen.insert(0x7F000000 | m.room()).second || novel;
+                        if (novel) {
+                            queue.push_front(std::move(next));
+                        } else {
+                            queue.push_back(std::move(next));
+                        }
                     }
                 }
             }

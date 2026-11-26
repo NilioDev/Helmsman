@@ -150,6 +150,28 @@ public:
         }
         return true;
     }
+    // For tools: puts the mouse on a thing of the room (an actor or a
+    // place), as when the player points at it.
+    void pointAtForTools(int id);
+    // For tools: sets a byte of the mission's state block.
+    void setStateByte(int offset, std::uint8_t v) {
+        if (offset >= 0 && offset < kStateSize) {
+            var(offset) = v;
+        }
+    }
+    // For tools: who is in the room and what they do, without where.
+    std::string actorsKey() const {
+        std::string k;
+        for (int i = 0; i < kActors; ++i) {
+            const auto& a = actors_[static_cast<std::size_t>(i)];
+            if (a.used) {
+                // Only what will still lead somewhere: an animation or walk
+                // that tells the room when it ends.
+                k += std::to_string(i) + (a.notifyFinish && a.state != Actor::State::Standing ? a.animName : std::string()) + ";";
+            }
+        }
+        return k;
+    }
     // The mission's state block as it is now.
     std::vector<std::uint8_t> stateBytes() const {
         const std::uint8_t* m = cpu_.memory() + X86::linear(kDataSeg, kState);
@@ -231,6 +253,7 @@ private:
     int objectAt(int x, int y);
     int hotspotAt(int x, int y, bool forAction);
     bool insidePolygon(int listOffset, int x, int y) const;
+    bool pointAt(int id, int& x, int& y) const;
     bool walkToObjectFirst();
     void checkTouches();
     int chooseUseTarget();

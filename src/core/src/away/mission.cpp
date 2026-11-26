@@ -695,6 +695,12 @@ void Mission::runCode(std::uint16_t offset) {
         return;
     }
     inRoomCode_ = true;
+    // Cleared however the code is left, also when the game is stopped in
+    // the middle of it.
+    struct Leave {
+        bool& flag;
+        ~Leave() { flag = false; }
+    } leave{inRoomCode_};
     cpu_.s[X86::DS] = kDataSeg;
     cpu_.s[X86::ES] = kDataSeg;
     cpu_.s[X86::SS] = kDataSeg;
@@ -710,7 +716,6 @@ void Mission::runCode(std::uint16_t offset) {
     } catch (const CpuError&) {
         // A room's code the interpreter cannot run is skipped.
     }
-    inRoomCode_ = false;
 }
 
 bool Mission::runExact(const Event& e) {

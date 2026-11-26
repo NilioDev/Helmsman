@@ -157,6 +157,72 @@ int Mission::hotspotAt(int x, int y, bool) {
     return -1;
 }
 
+bool Mission::pointAt(int id, int& x, int& y) const {
+    if (id >= 0 && id < kActors) {
+        const Actor& a = actors_[static_cast<std::size_t>(id)];
+        if (!a.used || !a.sprite.bitmap) {
+            return false;
+        }
+        x = a.sprite.x - a.sprite.bitmap->handleX + a.sprite.bitmap->width() / 2;
+        y = a.sprite.y - a.sprite.bitmap->handleY + a.sprite.bitmap->height() / 2;
+        return true;
+    }
+    int guard = 0;
+    for (int p = rdf16(0x12); p != 0 && p < rdf16(0x14) && guard < 512; ++guard) {
+        int head = rdf16(p);
+        int poly = p;
+        if ((head & 0x8000) != 0) {
+            poly = p + 6;
+            head = rdf16(poly);
+        }
+        const int count = rdf16(poly + 2);
+        if (count < 1 || count > 64) {
+            return false;
+        }
+        if (head == id) {
+            // A point inside: the corners' mean, else the first that is.
+            int sx = 0;
+            int sy = 0;
+            int left = 320, top = 200, right = 0, bottom = 0;
+            for (int i = 0; i < count; ++i) {
+                const int cx = static_cast<std::int16_t>(rdf16(poly + 4 + i * 4));
+                const int cy = static_cast<std::int16_t>(rdf16(poly + 6 + i * 4));
+                sx += cx;
+                sy += cy;
+                left = std::min(left, cx);
+                right = std::max(right, cx);
+                top = std::min(top, cy);
+                bottom = std::max(bottom, cy);
+            }
+            x = sx / count;
+            y = sy / count;
+            for (int ty = top; ty <= bottom && !insidePolygon(poly, x, y); ++ty) {
+                for (int tx = left; tx <= right; ++tx) {
+                    if (insidePolygon(poly, tx, ty)) {
+                        x = tx;
+                        y = ty;
+                        break;
+                    }
+                }
+            }
+            return true;
+        }
+        p = poly + 4 + count * 4;
+    }
+    return false;
+}
+
+void Mission::pointAtForTools(int id) {
+    int x = 0;
+    int y = 0;
+    if (pointAt(id, x, y)) {
+        session_.platform.mouseX = x;
+        session_.platform.mouseY = y;
+        setWord(0x10, static_cast<std::uint16_t>(x));
+        setWord(0x12, static_cast<std::uint16_t>(y)); // the mouse, as the rooms see it
+    }
+}
+
 int Mission::objectAt(int x, int y) {
     std::vector<const Sprite*> sprites;
     for (const auto& a : actors_) {
