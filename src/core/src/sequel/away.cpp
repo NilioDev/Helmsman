@@ -835,7 +835,7 @@ void Game::loadRoom(int number, bool first) {
         std::copy_n(common->begin(), 768, colours.begin());
     }
     std::fill_n(colours.begin(), 0x1E, 0);
-    for (const auto [from, to] : {std::pair{0x1E, 0x180}, std::pair{0x270, 0x294}, std::pair{0x2A0, 0x2E2}}) {
+    for (const auto& [from, to] : {std::pair{0x1E, 0x180}, std::pair{0x270, 0x294}, std::pair{0x2A0, 0x2E2}}) {
         std::copy(bgd->begin() + from, bgd->begin() + to, colours.begin() + from);
     }
     roomPalette_ = Palette::fromBytes(colours);
