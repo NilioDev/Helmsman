@@ -204,4 +204,16 @@ Mat heading(int angle) {
     return m;
 }
 
+Mat tilt(int angle) {
+    const double a = static_cast<double>(angle) / kTurn * 2 * std::numbers::pi;
+    const auto c = static_cast<std::int16_t>(std::lround(std::cos(a) * (kOne - 1)));
+    const auto s = static_cast<std::int16_t>(std::lround(std::sin(a) * (kOne - 1)));
+    Mat m = Mat::identity();
+    m.at(1, 1) = c;
+    m.at(1, 2) = s;
+    m.at(2, 1) = static_cast<std::int16_t>(-s);
+    m.at(2, 2) = c;
+    return m;
+}
+
 } // namespace helmsman::space

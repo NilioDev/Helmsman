@@ -143,6 +143,8 @@ public:
     // Warps to another system: the Enterprise leaves at warp speed and
     // arrives facing that system's planet.
     void warpTo(int system);
+    // Puts the planet of a system ahead (-1: one made up by chance).
+    void newPlanet(int system);
 
     // An officer's place: their animation ("bstndsp", "xstndmc", ...) or
     // nobody.
@@ -223,7 +225,6 @@ private:
     void captainsLog();
     void computer();
     void shipLost();
-    void newPlanet(int system); // -1: one made up by chance
     void showPlanet();
     void gameOver();
     bool creditFrames(int index, std::int32_t speed, int frames);

@@ -71,5 +71,8 @@ int angleOf(double y, double x);  // like atan2, 0..1023
 // A level frame whose forward direction points `angle` round from straight
 // ahead (+z) towards the right (+x).
 Mat heading(int angle);
+// A frame tilted `angle` round its right direction: forward goes down for
+// a positive angle.
+Mat tilt(int angle);
 
 } // namespace helmsman::space

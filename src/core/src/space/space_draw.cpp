@@ -383,6 +383,10 @@ void Space::drawPlanet(Surface& to, const Object& o) {
     if (!planetLook_ || planetSurface_.empty()) {
         return;
     }
+    // From inside the globe nothing of it is seen.
+    if (o.distance <= kPlanetRadius * kPlanetPixels.back() / 12) {
+        return;
+    }
     // Which side of it the watcher sees: the way from the eye to the
     // planet in the planet's own frame.
     const Vec local = apply(o.axes, o.pos - camera_);

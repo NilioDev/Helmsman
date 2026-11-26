@@ -128,10 +128,14 @@ std::shared_ptr<const Bitmap> Space::picture(const std::string& name) {
         return found->second;
     }
     std::shared_ptr<const Bitmap> b;
-    if (const auto data = archive_.load(key + ".SHP")) {
-        try {
-            b = std::make_shared<const Bitmap>(Bitmap::fromBytes(*data));
-        } catch (const FormatError&) {
+    // Most are kept as .SHP, a few (the warp flash) as plain pictures.
+    for (const char* ext : {".SHP", ".BMP"}) {
+        if (const auto data = archive_.load(key + ext)) {
+            try {
+                b = std::make_shared<const Bitmap>(Bitmap::fromBytes(*data));
+            } catch (const FormatError&) {
+            }
+            break;
         }
     }
     pictures_[key] = b;

@@ -92,6 +92,9 @@ void trialEvent(Bridge& b, const Event& e) {
             if (v.clock == 1) {
                 v.system = 8;
                 v.destination = 8;
+                if (v.planetSeed < 0) {
+                    b.newPlanet(8); // Hrakkour, when the voyage starts here
+                }
                 v.textFile = "trial";
                 v.vars = {};
                 v.vars[kFeatherScore] = v.awayScore;

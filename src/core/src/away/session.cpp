@@ -221,7 +221,11 @@ void Session::playEffect(std::string_view name, bool loop) {
     }
     path += ".VOC";
     try {
-        const auto bytes = source.read(path);
+        auto bytes = source.read(path);
+        if (!bytes) {
+            // A few sounds are kept in the game's archive instead.
+            bytes = archive.load(path.substr(8));
+        }
         if (!bytes) {
             return;
         }

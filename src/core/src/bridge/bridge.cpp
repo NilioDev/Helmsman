@@ -172,11 +172,62 @@ void Bridge::showPlanet() {
 }
 
 void Bridge::warpTo(int system) {
-    sound(0x29);
+    // Seen from ahead and to the side: the Enterprise turns a little,
+    // flashes and is gone; the bridge then finds itself before the new
+    // system's planet.
+    Platform& pf = session_.platform;
     space::Object& p = space_.player();
+    const bool wasFull = fullView_;
+    setFullView(true);
+    pf.screen.fill(0);
+    pf.pointerShown = false;
+    p.pos = {};
+    p.axes = space::heading(0x100);
+    p.velocity = {};
+    const space::Vec fwd = p.axes.row(2);
+    const space::Vec right = p.axes.row(0);
+    const auto along = [](const space::Vec& v, std::int32_t n) {
+        return space::Vec{(v.x * n) >> 14, (v.y * n) >> 14, (v.z * n) >> 14};
+    };
+    space_.watchFrom(p.pos + along(fwd, 2000) + along(right, 500));
+    music(0xC);
+    int flash = -1;
+    const space::Kind kind = p.kind;
+    for (int i = 0; i < 0x40 && !pf.quit; ++i) {
+        if (i < 0x30) {
+            p.axes = space::heading(-1) * p.axes;
+        }
+        p.pos = p.pos + along(p.axes.row(2), 100);
+        if (i == 0x2C) {
+            sound(0x29);
+        }
+        if (i == 0x30) {
+            flash = space_.addStill("warp00", space::Vec{});
+            if (flash >= 0) {
+                space_.object(flash).pos = p.pos;
+                space_.object(flash).scale = 0x15;
+            }
+        } else if (i > 0x30 && flash >= 0) {
+            char name[16];
+            std::snprintf(name, sizeof name, "warp%02d", i - 0x30);
+            space_.object(flash).stillName = name;
+        }
+        if (i == 0x34) {
+            p.kind = space::Kind::None; // gone
+        }
+        session_.waitTick();
+        drawFrame();
+    }
+    if (flash >= 0) {
+        space_.remove(flash);
+    }
+    p.kind = kind;
     p.pos = {};
     p.axes = space::Mat::identity();
     p.velocity = {};
+    space_.watchFromBridge();
+    pf.pointerShown = true;
+    setFullView(wasFull);
     voyage_.system = system;
     voyage_.inOrbit = false;
     newPlanet(system);
@@ -318,7 +369,7 @@ void Bridge::approach(int still) {
                                              : p.pos + space::applyTransposed(p.axes, space::Vec{0, 0, near});
     const int i = space_.addStill(kStills[std::clamp(still, 4, 7)], space::Vec{});
     if (i < 0) {
-        orbit(true, false);
+        voyage_.inOrbit = true;
         return;
     }
     space::Object& s = space_.object(i);
@@ -349,7 +400,9 @@ void Bridge::approach(int still) {
     }
     setFullView(wasFull);
     p.pos = at - space::Vec{0, 0, near};
-    orbit(true, false);
+    p.speed = 0;
+    p.wantSpeed = 0;
+    space_.steer(0, 0);
 }
 
 void Bridge::removeStill() {
@@ -383,16 +436,65 @@ void Bridge::clearShots() {
 }
 
 void Bridge::orbit(bool enter, bool announce) {
+    // Seen from beside the planet: the Enterprise sweeps in and slows into
+    // orbit, or turns away from the planet and speeds off; the view fades
+    // out at the end and comes back on the bridge.
+    Platform& pf = session_.platform;
+    space::Object& p = space_.player();
+    const space::Vec planet = space_.hasPlanet() ? space_.planet().pos : p.pos + space::Vec{0, 0, kPlanetAhead};
+    const Palette normal = pf.palette;
+    const bool wasFull = fullView_;
+    setFullView(true);
+    pf.pointerShown = false;
+    p.velocity = {};
+    auto frame = [&](int i, int frames, int fadeFrom) {
+        if (i >= fadeFrom) {
+            pf.palette = normal.faded(256 * (frames - i) / (frames - fadeFrom + 1));
+        }
+        session_.waitTick();
+        drawFrame();
+    };
+    if (enter) {
+        p.pos = planet + space::Vec{0x226, 0, -0x802};
+        p.axes = space::Mat::identity();
+        space_.watchFrom(planet + space::Vec{0x384, 0, 0});
+        std::int32_t speed = 100;
+        for (int i = 0; i < 0x25 && !pf.quit; ++i) {
+            p.pos.z += speed;
+            speed -= 2;
+            frame(i, 0x25, 0x20);
+        }
+        // In orbit: off the planet's near side, looking past it.
+        p.pos = planet - space::Vec{0, 0, space::Space::kPlanetRadius * 11 + 250};
+        p.axes = space::tilt(-0x20) * space::heading(0x40);
+        p.speed = 0;
+        p.wantSpeed = 0;
+        space_.steer(0, 0);
+    } else {
+        p.pos = planet + space::Vec{-300, 0, -0x226};
+        p.axes = space::heading(0x100);
+        space_.watchFrom(p.pos - space::Vec{0, 0, 0x1FE});
+        std::int32_t speed = 0x19;
+        for (int i = 0; i < 0x40 && !pf.quit; ++i) {
+            if (i >= 0x20) {
+                p.axes = space::heading(8) * p.axes;
+            }
+            const space::Vec fwd = p.axes.row(2);
+            p.pos = p.pos + space::Vec{(speed * fwd.x) >> 14, (speed * fwd.y) >> 14, (speed * fwd.z) >> 14};
+            speed += 4;
+            frame(i, 0x40, 0x3C);
+        }
+        p.speed = 0x19 << 16;
+        p.wantSpeed = 0x19 << 16;
+    }
+    space_.watchFromBridge();
+    pf.palette = normal;
+    pf.pointerShown = true;
+    setFullView(wasFull);
     if (announce) {
         sayAt(kSulu, enter ? "#BRID\\B_333#Entering standard orbit." : "#BRID\\B_335#Leaving orbit.", 0x7A, 0x74, 0xB0);
     }
     voyage_.inOrbit = enter;
-    if (enter) {
-        space::Object& p = space_.player();
-        p.wantSpeed = 0;
-        p.speed = 0;
-        space_.steer(0, 0);
-    }
 }
 
 // A report's text has the voices of two numbers and the numbers themselves
