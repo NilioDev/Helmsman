@@ -72,6 +72,8 @@ struct Platform {
     // (for the second game "episode room spawn", an away mission).
     std::string devStart;
     bool devTrace = false; // the tools want to see what the scripts do
+    // The tools keep a picture of the screen under this name.
+    std::function<void(const std::string&)> devShot;
 
     // Set by the game, taken by the app.
     Surface screen;

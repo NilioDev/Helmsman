@@ -1194,7 +1194,7 @@ void Game::enterRoom(int spawn) {
 
 void Game::drawAway() {
     stepRoomClock();
-    if (explore_) {
+    if (explore_ && !exploreDrawing_) {
         return; // nobody looks
     }
     std::vector<const away::Sprite*> sprites;

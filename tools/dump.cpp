@@ -676,6 +676,9 @@ int main(int argc, char** argv) {
             const std::string outFolder = argv[7];
             Platform platform;
             platform.saveFolder = outFolder + "/saves";
+            platform.devShot = [&outFolder, &platform](const std::string& name) {
+                writeShot(outFolder + "/" + name + ".png", platform);
+            };
             int frame = 0;
             int release = -1;
             // The second game's explorer looks at no pictures: two ticks a frame.

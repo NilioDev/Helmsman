@@ -134,5 +134,6 @@ found. It prints the orders that led to the end, to a lost game, to beaming
 up early or to a script that never lets go. ORDERS, as printed, are given
 first; `pick:N` there answers the next choice, button or typed word with
 answer N (counted from 0), and waits a little for a question that comes
-late. `wait` lets the room's clock run for 200 ticks, so its timers go off. With `HELMSMAN_TRACE` it also prints every state and the values
+late. `wait` lets the room's clock run for 200 ticks, so its timers go off.
+`shot:N` keeps a picture of the room as `OUT/shot-N.png`. With `HELMSMAN_TRACE` it also prints every state and the values
 that tell it apart.

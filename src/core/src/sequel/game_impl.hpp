@@ -402,6 +402,7 @@ private:
     void devAwayMission(const std::string& spec);
     // The explorer of the tools (explore.cpp).
     std::shared_ptr<Explorer> explore_;
+    bool exploreDrawing_ = false; // the explorer wants one picture
     void startExplorer(int most, const std::string& path);
     void exploreIdle();
     void exploreFrame();

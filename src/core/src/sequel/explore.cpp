@@ -43,6 +43,7 @@ constexpr int kGoOut = 0x100;  // through the way out `a`
 constexpr int kStepIn = 0x101; // walk into the touch area `a`
 constexpr int kWait = 0x102;   // let time pass
 constexpr int kPick = 0x103;   // in a replayed path: the answer the next choice gets
+constexpr int kShot = 0x104;   // in a replayed path: a picture of the room, "shot-N"
 
 constexpr int kSettleFrames = 12;
 constexpr int kStuckFrames = 6000;
@@ -75,6 +76,9 @@ std::string actionText(int type, int a, int b, int variant) {
         break;
     case kPick:
         std::snprintf(s, sizeof s, "pick:%d", a);
+        break;
+    case kShot:
+        std::snprintf(s, sizeof s, "shot:%d", a);
         break;
     default:
         std::snprintf(s, sizeof s, "wait");
@@ -162,8 +166,8 @@ std::optional<Explorer::Action> readAction(const std::string& w) {
         a.a = std::atoi(rest.c_str());
     } else if (kind == "wait") {
         a.type = kWait;
-    } else if (kind == "pick") {
-        a.type = kPick;
+    } else if (kind == "pick" || kind == "shot") {
+        a.type = kind == "pick" ? kPick : kShot;
         a.a = std::atoi(rest.c_str());
     } else {
         return std::nullopt;
@@ -556,6 +560,14 @@ void Game::exploreIdle() {
         }
         break;
     }
+    case kShot:
+        exploreDrawing_ = true;
+        drawAway();
+        exploreDrawing_ = false;
+        if (p_.devShot) {
+            p_.devShot("shot-" + std::to_string(act.a));
+        }
+        break;
     case kWait:
         x.waiting = 200;
         x.waitRoom = roomNumber_;
