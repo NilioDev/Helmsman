@@ -218,9 +218,9 @@ int main(int argc, char** argv) {
                     // HELMSMAN_STATE=OFF=VAL,... sets bytes of the mission's
                     // state first (hexadecimal).
                     if (const char* preset = std::getenv("HELMSMAN_STATE")) {
-                        std::stringstream list(preset);
+                        std::stringstream presets(preset);
                         std::string item;
-                        while (std::getline(list, item, ',')) {
+                        while (std::getline(presets, item, ',')) {
                             const auto eq = item.find('=');
                             if (eq != std::string::npos) {
                                 m.setStateByte(std::stoi(item.substr(0, eq), nullptr, 16),
