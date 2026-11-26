@@ -121,6 +121,58 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
     case 0x09: // a new walking map
         loadWalkMap(roomText(c.arg(0), 9));
         return 0;
+    case 0x0B: { // a line from (x1, y1) to (x2, y2): colour, depth
+        int slot = -1;
+        for (int i = 0; i < 6; ++i) {
+            if (!beams_[i].used) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) {
+            return 0xFFFF;
+        }
+        const int x1 = c.sarg(0);
+        const int y1 = c.sarg(1);
+        const int x2 = c.sarg(2);
+        const int y2 = c.sarg(3);
+        const int kind = std::clamp<int>(c.sarg(4), 0, 1);
+        int depth = c.sarg(5);
+        if (depth < 0 || depth > 15) {
+            depth = 5;
+        }
+        const int left = std::min(x1, x2) - 1;
+        const int top = std::min(y1, y2) - 1;
+        const int w = std::abs(x2 - x1) + 3;
+        const int h = std::abs(y2 - y1) + 3;
+        if (w > 640 || h > 400) {
+            return 0xFFFF;
+        }
+        auto bm = std::make_shared<Bitmap>();
+        bm->pixels = Surface(w, h);
+        const auto colour = m_.u8(static_cast<std::uint16_t>(0x1534 + 2 * kind));
+        const int n = std::max(std::abs(x2 - x1), std::abs(y2 - y1));
+        for (int i = 0; i <= n; ++i) {
+            const int x = x1 + (n == 0 ? 0 : (x2 - x1) * i / n) - left;
+            const int y = y1 + (n == 0 ? 0 : (y2 - y1) * i / n) - top;
+            bm->pixels.set(x, y, colour);
+        }
+        Beam& b = beams_[slot];
+        b.used = true;
+        b.bitmap = bm;
+        b.sprite = away::Sprite{};
+        b.sprite.bitmap = bm;
+        b.sprite.x = left;
+        b.sprite.y = top;
+        b.sprite.depth = depth;
+        b.sprite.order = 100 + slot;
+        return static_cast<std::uint32_t>(slot);
+    }
+    case 0x0C: // and away with it
+        if (c.sarg(0) >= 0 && c.sarg(0) < 6) {
+            beams_[c.sarg(0)] = Beam{};
+        }
+        return 0;
     case 0x0D: // has the team an item?
         return m_.u8(static_cast<std::uint16_t>(kItems + 10 * (c.arg(0) & 0x7F)));
     case 0x0E: { // where a person or a hotspot is
@@ -341,6 +393,40 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
     case 0x2E: // wait
         waitAwayTicks(c.sarg(0));
         return 0;
+    case 0x2F: { // the player points at something: a table of {thing, name}
+        const std::uint16_t table = c.arg(0);
+        const int count = std::clamp<int>(c.sarg(1), 0, 64);
+        setCursor("pushbtn");
+        p_.takeClicks();
+        p_.keys.clear();
+        int picked = -1;
+        while (!p_.quit) {
+            drawAway();
+            const int over = thingAt(p_.mouseX, p_.mouseY);
+            for (int i = 0; i < count; ++i) {
+                const auto at = static_cast<std::uint16_t>(table + 4 * i);
+                if (static_cast<std::int16_t>(m_.cpu.read16(seg, at)) == over) {
+                    const auto name = m_.cpu.read16(seg, static_cast<std::uint16_t>(at + 2));
+                    if (name != 0) {
+                        font_.drawText(p_.screen, 2, 2, m_.scriptText(seg, name, 40), 0, shade_.data());
+                    }
+                    break;
+                }
+            }
+            present();
+            bool chose = (p_.takeClicks() & 1) != 0;
+            for (const auto& k : p_.keys) {
+                chose = chose || k.scancode == scancode::kEnter;
+            }
+            p_.keys.clear();
+            if (chose) {
+                picked = over;
+                break;
+            }
+        }
+        cursorName_.clear();
+        return static_cast<std::uint16_t>(picked);
+    }
     case 0x30: // a scene
         playScene(p_, assets_, upperName(roomText(c.arg(0), 9)), episode_ ? &*episode_ : nullptr);
         return 0;

@@ -360,17 +360,18 @@ int Game::startAnim(int who, std::string name, int x, int y, int scale) {
     return who;
 }
 
+// A person of the crew stands; anyone else leaves the room.
 void Game::stand(int who) {
     if (who < 0 || who >= 32) {
         return;
     }
-    if (rec8(who, rec::kLetter) == 0) {
-        // Strangers have no standing pictures: they keep their last frame.
-        bodies_[who].walking = false;
-        bodies_[who].held = true;
+    const auto r = record(who);
+    if ((m_.u8(r) & flag::kShown) != 0) {
+        startAnim(who, "?stnd?", -1, -1, -1);
         return;
     }
-    startAnim(who, "?stnd?", -1, -1, -1);
+    m_.set8(r, static_cast<std::uint8_t>(m_.u8(r) & ~flag::kInUse));
+    bodies_[who] = Body{};
 }
 
 void Game::finish(int who) {
@@ -448,6 +449,8 @@ bool Game::walk(int who, int fx, int fy, int tx, int ty, int code) {
     b.frames = nullptr;
     b.x = fx;
     b.y = fy;
+    m_.set16(static_cast<std::uint16_t>(r + rec::kX), static_cast<std::uint16_t>(fx));
+    m_.set16(static_cast<std::uint16_t>(r + rec::kY), static_cast<std::uint16_t>(fy));
     b.walkFrame = 0;
     b.path.clear();
     setRec8(who, rec::kCode, static_cast<std::uint8_t>(code));
@@ -466,8 +469,15 @@ bool Game::walk(int who, int fx, int fy, int tx, int ty, int code) {
         }
     }
     b.path.emplace_back(tx, ty);
+    if (p_.devTrace) {
+        std::fprintf(stderr, "walk %d from %d,%d to %d,%d via %zu points\n", who, fx, fy, tx, ty, b.path.size());
+    }
     nextLeg(b);
     setWalkPicture(b, who);
+    if (b.steps == 0 && b.path.empty()) {
+        // Already there.
+        walkStep(b, who);
+    }
     return true;
 }
 
@@ -896,6 +906,9 @@ void Game::loadRoom(int number, bool first) {
     for (auto& b : bodies_) {
         b = Body{};
     }
+    for (auto& beam : beams_) {
+        beam = Beam{};
+    }
     for (int i = 0; i < 32; ++i) {
         const auto r = record(i);
         std::uint8_t f = static_cast<std::uint8_t>(m_.u8(r) & ~flag::kInUse);
@@ -983,6 +996,11 @@ void Game::drawAway() {
         const Body& b = bodies_[i];
         if (b.used && (rec8(i, rec::kFlags) & flag::kInUse) != 0 && b.sprite.bitmap) {
             sprites.push_back(&b.sprite);
+        }
+    }
+    for (const auto& beam : beams_) {
+        if (beam.used) {
+            sprites.push_back(&beam.sprite);
         }
     }
     away::sortForDrawing(sprites);
@@ -1198,6 +1216,9 @@ void Game::awayInput() {
     const int over = busy_ ? -1 : thingAt(p_.mouseX, p_.mouseY);
     setCursor(busy_ ? "wait" : cursorFor(action_, over >= 0 && action_ != 1));
     const auto clicks = p_.takeClicks();
+    if (p_.devTrace && clicks != 0) {
+        std::fprintf(stderr, "click %d at %d,%d over %d action %d busy %d\n", clicks, p_.mouseX, p_.mouseY, over, action_, busy_ ? 1 : 0);
+    }
     bool menu = (clicks & 2) != 0;
     bool inv = false;
     for (const auto& k : p_.keys) {

@@ -331,6 +331,13 @@ private:
 
     std::shared_ptr<const Bitmap> scaledPicture(const std::string& name, int scale);
     std::map<std::pair<std::string, int>, std::shared_ptr<const Bitmap>> scaled_;
+    // Lines the rooms draw (phaser beams): up to six.
+    struct Beam {
+        bool used = false;
+        std::shared_ptr<Bitmap> bitmap;
+        away::Sprite sprite;
+    };
+    Beam beams_[6];
     bool away_ = false;
     away::Scene scene_;
     Palette roomPalette_;
