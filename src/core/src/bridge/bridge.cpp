@@ -251,14 +251,37 @@ std::string Bridge::enterCode() {
 }
 
 void Bridge::approach(int still) {
+    // The ship drifts in from far ahead and comes to rest in front of the
+    // Enterprise, slowing down as it nears; then the Enterprise holds
+    // station beside it.
     static constexpr const char* kStills[8] = {"", "", "", "", "ark7", "derelict", "masada", "republic"};
     removeStill();
-    const int i = space_.addStill(kStills[std::clamp(still, 4, 7)], space::Vec{-300, -150, 1600});
-    if (i >= 0) {
-        space_.object(i).size = 0xFA;
-        space_.object(i).scale = 2;
-        space_.object(i).axes = space_.player().axes;
+    constexpr int kScale = 2;
+    const std::int32_t near = space_.focal() * kScale;
+    const std::int32_t far = near * 6;
+    const int i = space_.addStill(kStills[std::clamp(still, 4, 7)], space::Vec{0, 0, far});
+    if (i < 0) {
+        orbit(true, false);
+        return;
     }
+    space::Object& s = space_.object(i);
+    const space::Object& p = space_.player();
+    s.size = 0xFA;
+    s.scale = kScale;
+    s.axes = p.axes;
+    voyage_.inOrbit = true;
+    const bool wasFull = fullView_;
+    setFullView(true);
+    constexpr int kSteps = 100;
+    for (int step = 1; step <= kSteps && !session_.platform.quit; ++step) {
+        const std::int64_t left = kSteps - step;
+        const auto z = static_cast<std::int32_t>(near + (far - near) * left * left / (kSteps * kSteps));
+        s.pos = p.pos + space::applyTransposed(p.axes, space::Vec{0, 0, z});
+        session_.waitTick();
+        drawFrame();
+    }
+    setFullView(wasFull);
+    s.pos = p.pos + space::applyTransposed(p.axes, space::Vec{0, 0, near});
     orbit(true, false);
 }
 

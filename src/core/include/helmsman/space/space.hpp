@@ -165,6 +165,8 @@ public:
     void setView(ClipRect rect, int zoom);
     const ClipRect& view() const { return view_; }
     int zoom() const { return zoom_; }
+    // How far from the eye a thing is drawn at its own size, for scale 1.
+    std::int32_t focal() const { return focal_; }
     int centreX() const { return centreX_; }
     int centreY() const { return centreY_; }
 

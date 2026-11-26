@@ -226,6 +226,10 @@ int main(int argc, char** argv) {
                             at = comma + 1;
                         }
                     }
+                    if (const char* still = std::getenv("HELMSMAN_STILL")) {
+                        // For trying stills out: 4 ark7 .. 7 republic.
+                        b.approach(std::atoi(still));
+                    }
                     const auto result = b.run();
                     std::printf("bridge ended: %d\n", static_cast<int>(result.leave));
                 } else {
