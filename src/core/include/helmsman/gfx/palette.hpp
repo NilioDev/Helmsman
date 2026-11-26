@@ -28,6 +28,9 @@ public:
 
     // Every colour scaled towards black: `level` 0 is black, 256 unchanged.
     Palette faded(int level) const;
+    // Every colour moved towards `target`: `percent` 0 is all target, 100
+    // unchanged.
+    Palette towards(Colour target, int percent) const;
 
     // A colour scaled to 8 bits per channel, the way a VGA card shows it.
     static std::uint8_t to8Bit(std::uint8_t sixBit) {

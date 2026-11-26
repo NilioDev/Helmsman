@@ -341,6 +341,20 @@ private:
     bool away_ = false;
     away::Scene scene_;
     Palette roomPalette_;
+    // The room's brightness in percent (DS:CAAA) and where it is going; it
+    // fades towards fadeColour_ (DS:11B2), 10 percent a tick.
+    int fade_ = 100;
+    int fadeTarget_ = 100;
+    std::uint64_t fadeTick_ = 0;
+    Colour fadeColour_{};
+    void fadeTo(int target, bool wait);
+    // A panel of buttons a room puts up (a puzzle): its menu and where.
+    std::vector<MenuButton> panel_;
+    int panelX_ = 0;
+    int panelY_ = 0;
+    int panelHover();
+    void drawPanel();
+    int pollPanel(std::int32_t ticks);
     Body bodies_[32];
     std::vector<std::uint8_t> walkMap_;
     std::vector<std::pair<int, int>> nodes_;

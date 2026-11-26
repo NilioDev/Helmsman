@@ -601,8 +601,101 @@ void Game::advanceBodies() {
 }
 
 void Game::awayFrame() {
+    if (fadeTick_ > awayTicks_) {
+        fadeTick_ = awayTicks_;
+    }
+    for (; fadeTick_ < awayTicks_; ++fadeTick_) {
+        if (fade_ < fadeTarget_) {
+            fade_ = std::min(fadeTarget_, fade_ + 10);
+        } else if (fade_ > fadeTarget_) {
+            fade_ = std::max(fadeTarget_, fade_ - 10);
+        }
+    }
     drawAway();
     present();
+}
+
+// --- A room's panel of buttons ---------------------------------------------------
+
+int Game::panelHover() {
+    for (std::size_t i = panel_.size(); i-- > 0;) {
+        const auto& b = panel_[i];
+        const auto pic = picture(b.picture);
+        if (!pic) {
+            continue;
+        }
+        const int x = panelX_ + b.x;
+        const int y = panelY_ + b.y;
+        if (p_.mouseX >= x && p_.mouseY >= y && p_.mouseX < x + pic->width() && p_.mouseY < y + pic->height()) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void Game::drawPanel() {
+    if (panel_.empty()) {
+        return;
+    }
+    p_.pointerTargets.clear();
+    for (const auto& b : panel_) {
+        if (const auto pic = picture(b.picture)) {
+            const int x = panelX_ + b.x;
+            const int y = panelY_ + b.y;
+            pic->copyTo(p_.screen, x, y);
+            p_.pointerTargets.push_back(ClipRect{x, y, x + pic->width() - 1, y + pic->height() - 1});
+        }
+    }
+    const int hover = panelHover();
+    if (hover < 0) {
+        return;
+    }
+    const auto& b = panel_[static_cast<std::size_t>(hover)];
+    const auto pic = picture(b.picture);
+    const int x = panelX_ + b.x;
+    const int y = panelY_ + b.y;
+    for (int i = 0; i < pic->width(); ++i) {
+        p_.screen.set(x + i, y, 15);
+        p_.screen.set(x + i, y + pic->height() - 1, 15);
+    }
+    for (int j = 0; j < pic->height(); ++j) {
+        p_.screen.set(x, y + j, 15);
+        p_.screen.set(x + pic->width() - 1, y + j, 15);
+    }
+}
+
+// Waits up to `ticks` (negative: for ever, 0: one frame) for a click on one
+// of the panel's buttons: its number, or -1.
+int Game::pollPanel(std::int32_t ticks) {
+    const std::uint64_t end = awayTicks_ + static_cast<std::uint64_t>(std::max<std::int32_t>(0, ticks));
+    bool anyId = false;
+    for (const auto& b : panel_) {
+        anyId = anyId || b.id != 0;
+    }
+    do {
+        awayFrame();
+        const auto clicks = p_.takeClicks();
+        bool enter = false;
+        for (const auto& k : p_.keys) {
+            enter = enter || k.scancode == scancode::kEnter;
+        }
+        p_.keys.clear();
+        if ((clicks & 1) != 0 || enter) {
+            const int hover = panelHover();
+            if (hover >= 0) {
+                return anyId ? panel_[static_cast<std::size_t>(hover)].id : hover;
+            }
+        }
+    } while (!p_.quit && (ticks < 0 || awayTicks_ < end));
+    return -1;
+}
+
+void Game::fadeTo(int target, bool wait) {
+    fadeTarget_ = std::clamp(target, 0, 100);
+    fadeTick_ = awayTicks_;
+    for (int guard = 0; wait && !p_.quit && fade_ != fadeTarget_ && guard < 600; ++guard) {
+        awayFrame();
+    }
 }
 
 void Game::waitAwayTicks(int ticks) {
@@ -833,6 +926,8 @@ void Game::loadRoom(int number, bool first) {
     const std::string mission = m_.text(ds::kEpisodeName, 16);
     const std::string name = mission + std::to_string(number);
     roomNumber_ = number;
+    fadeTarget_ = 100; // a dark room comes back
+    panel_.clear();
     // The room's picture, depths and palette.
     const auto bgd = file(name + ".BGD");
     if (!bgd || bgd->size() < 768 + 64000) {
@@ -900,6 +995,7 @@ void Game::loadRoom(int number, bool first) {
         throw FormatError("the room's code is missing: " + name);
     }
     m_.loadRoomCode(Machine::kRoom, *code, true);
+    popHandlers(0, -1); // the last room's, gone with its code
     pushHandlers(0, m_.word(Machine::kRoom, room::kLists), 0);
     loadWalkMap(name);
 
@@ -1005,7 +1101,8 @@ void Game::drawAway() {
     }
     away::sortForDrawing(sprites);
     scene_.draw(p_.screen, sprites);
-    p_.palette = roomPalette_;
+    drawPanel();
+    p_.palette = fade_ >= 100 ? roomPalette_ : roomPalette_.towards(fadeColour_, fade_);
 }
 
 void Game::playEffect(const std::string& name) {
@@ -1321,6 +1418,8 @@ void Game::awayMission() {
     m_.set16(ds::kSpawn, 0xFFFF);
     m_.set16(ds::kRoom, 0);
     away_ = true;
+    fade_ = fadeTarget_ = 100;
+    fadeColour_ = Colour{};
     busy_ = false;
     p_.pointerShown = true;
     bool first = true;

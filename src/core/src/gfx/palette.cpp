@@ -31,4 +31,15 @@ Palette Palette::faded(int level) const {
     return p;
 }
 
+Palette Palette::towards(Colour target, int percent) const {
+    percent = std::clamp(percent, 0, 100);
+    auto mix = [&](int c, int t) { return static_cast<std::uint8_t>(std::clamp(t + (c - t) * percent / 100, 0, 63)); };
+    Palette p;
+    for (std::size_t i = 0; i < 256; ++i) {
+        const auto& c = colours_[i];
+        p.colours_[i] = Colour{mix(c.r, target.r), mix(c.g, target.g), mix(c.b, target.b)};
+    }
+    return p;
+}
+
 } // namespace helmsman

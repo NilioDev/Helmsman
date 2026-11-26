@@ -301,6 +301,23 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
     case 0x1A: // and away again
         popHandlers(currentKind_, c.arg(0));
         return 0;
+    case 0x1B: // a panel of buttons: menu, x, y
+        panel_ = menu(roomText(c.arg(0), 10));
+        panelX_ = c.sarg(1);
+        panelY_ = c.sarg(2);
+        setCursor("pushbtn");
+        return 0;
+    case 0x1C: // and away with it
+        panel_.clear();
+        return 0;
+    case 0x20: { // the button clicked within (lo, hi) ticks; -1 none
+        if (panel_.empty()) {
+            return 0xFFFF;
+        }
+        const std::int32_t ticks =
+            c.arg(0) == 0xFFFF && c.arg(1) == 0xFFFF ? -1 : static_cast<std::int32_t>(pack(c.arg(0), c.arg(1)) & 0x7FFFFFFF);
+        return static_cast<std::uint16_t>(pollPanel(ticks));
+    }
     case 0x22: // held: a person stays put
         if (valid(who(0))) {
             m_.set16(static_cast<std::uint16_t>(record(who(0)) + rec::kHeld), c.arg(1));
@@ -443,8 +460,19 @@ std::uint32_t Game::roomCommand(ScriptCall& c) {
         }
         return 0;
     }
-    case 0x36: // wait, animating
+    case 0x33: // show the new picture now
+        awayFrame();
+        return 0;
+    case 0x35: // fade in
+        fadeTo(100, true);
+        return 0;
+    case 0x36: // fade out, then wait (animating)
+        fadeTo(0, true);
         waitAwayTicks(c.sarg(0));
+        return 0;
+    case 0x37: // the colour fades go to (0..63 each)
+        fadeColour_ = Colour{static_cast<std::uint8_t>(c.arg(0) & 0x3F), static_cast<std::uint8_t>(c.arg(1) & 0x3F),
+                             static_cast<std::uint8_t>(c.arg(2) & 0x3F)};
         return 0;
     case 0x39: // who speaks, with which animation
         talker_ = who(0);
