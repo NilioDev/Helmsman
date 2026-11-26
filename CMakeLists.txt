@@ -24,6 +24,7 @@ option(HLM_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(HlmWarnings)
+include(HlmChdr)
 
 # Engine core: platform independent, no SDL. Everything that can be tested
 # without a screen lives here.

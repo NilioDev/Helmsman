@@ -170,10 +170,9 @@ void findGames(App& app, int argc, char** argv) {
         if (!std::filesystem::is_directory(folder, ec)) {
             continue;
         }
-        if (tryGame(app, folder)) {
-            continue;
-        }
-        // Images and folders inside it: a .cue before its .bin.
+        tryGame(app, folder);
+        // Images and folders inside it, which may hold the other game: a
+        // .cue before its .bin.
         std::vector<std::filesystem::path> inside;
         for (const auto& entry : std::filesystem::directory_iterator(folder, ec)) {
             inside.push_back(entry.path());
@@ -539,6 +538,7 @@ void startProgram(App& app, int argc, char** argv) {
         return nullptr;
     };
     app.library.play = [&app](helmsman::GameSource& source) { helmsman::playGame(app.platform, source); };
+    helmsman::GameSource::setCacheFolder(prefFolder() / "cache");
     findGames(app, argc, argv);
     app.platform.saveFolder = prefFolder() / "saves";
     app.program = std::make_unique<helmsman::Fiber>([&app] { helmsman::runShell(app.platform, app.library); });

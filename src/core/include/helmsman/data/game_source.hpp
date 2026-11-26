@@ -45,10 +45,14 @@ public:
     virtual std::vector<AudioTrack> audioTracks() const { return {}; }
     virtual std::vector<std::int16_t> readAudio(const AudioTrack&, std::uint64_t, std::size_t) { return {}; }
 
-    // Opens an image (.cue, .bin, .iso) or a folder and finds which game it
-    // holds. Empty when it holds neither; throws FormatError when an image
-    // is damaged.
+    // Opens a disc image (any kind Disc::isImage names), a .zip holding one,
+    // or a folder, and finds which game it holds. A folder may hold the CD's
+    // files or an image of the CD. Empty when it holds neither game; throws
+    // FormatError when an image is damaged.
     static std::unique_ptr<GameSource> open(const std::filesystem::path& path);
+
+    // Where a .zip's image is unpacked to. Without it a .zip is not opened.
+    static void setCacheFolder(std::filesystem::path folder);
 
 protected:
     GameId game_ = GameId::Anniversary;

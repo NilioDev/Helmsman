@@ -37,6 +37,7 @@
 #include "helmsman/sequel/machine.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <chrono>
 #include <cstdio>
 #include <deque>
@@ -79,10 +80,11 @@ struct Step {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: helmsman-dump IMAGE-OR-FOLDER list|file|picture ...\n");
+        std::fprintf(stderr, "usage: helmsman-dump IMAGE-OR-FOLDER list|tracks|track|file|picture ...\n");
         return 2;
     }
     try {
+        GameSource::setCacheFolder(std::filesystem::temp_directory_path() / "helmsman-cache");
         auto source = GameSource::open(argv[1]);
         if (!source) {
             std::fprintf(stderr, "no game found there\n");
@@ -90,6 +92,34 @@ int main(int argc, char** argv) {
         }
         const std::string what = argv[2];
         auto archiveArg = [&](int index) { return argc > index ? std::string(argv[index]) : std::string("DATA"); };
+        if (what == "tracks") {
+            // Each audio track with a checksum of its samples, to compare
+            // one image format with another.
+            for (const auto& track : source->audioTracks()) {
+                std::uint64_t sum = 1469598103934665603ULL;
+                const std::uint64_t frames = track.size / 4;
+                for (std::uint64_t at = 0; at < frames; at += 44100) {
+                    const auto n = static_cast<std::size_t>(std::min<std::uint64_t>(44100, frames - at));
+                    for (const auto sample : source->readAudio(track, at, n)) {
+                        sum = (sum ^ static_cast<std::uint16_t>(sample)) * 1099511628211ULL;
+                    }
+                }
+                std::printf("track %d: %llu frames, sum %016llx\n", track.number,
+                    static_cast<unsigned long long>(frames), static_cast<unsigned long long>(sum));
+            }
+            return 0;
+        }
+        if (what == "track" && argc >= 5) {
+            // One audio track's samples, as raw 16-bit stereo.
+            std::ofstream out(argv[4], std::ios::binary);
+            for (const auto& track : source->audioTracks()) {
+                if (track.number == std::atoi(argv[3])) {
+                    const auto samples = source->readAudio(track, 0, static_cast<std::size_t>(track.size / 4));
+                    out.write(reinterpret_cast<const char*>(samples.data()), static_cast<std::streamsize>(samples.size() * 2));
+                }
+            }
+            return 0;
+        }
         if (what == "list") {
             const auto archive = Archive::open(*source, archiveArg(3));
             for (const auto& name : archive.names()) {

@@ -3,6 +3,12 @@ add_library(hlm_opl3 STATIC "${PROJECT_SOURCE_DIR}/third_party/nuked-opl3/opl3.c
 target_include_directories(hlm_opl3 PUBLIC "${PROJECT_SOURCE_DIR}/third_party/nuked-opl3")
 set_target_properties(hlm_opl3 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Music decoders for images that keep the CD's music as .ogg, .flac or .mp3:
+# dr_mp3 (public domain / MIT-0; dr_flac comes with libchdr) and stb_vorbis (MIT / public domain).
+add_library(hlm_decoders STATIC "${PROJECT_SOURCE_DIR}/third_party/decoders.c")
+target_include_directories(hlm_decoders SYSTEM PUBLIC "${PROJECT_SOURCE_DIR}/third_party")
+set_target_properties(hlm_decoders PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 configure_file(version.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/generated/helmsman/version.hpp" @ONLY)
 
 file(GLOB_RECURSE HLM_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
@@ -16,5 +22,5 @@ target_include_directories(hlm_core PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(hlm_core PUBLIC cxx_std_20)
 set_target_properties(hlm_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 find_package(Threads REQUIRED)
-target_link_libraries(hlm_core PUBLIC Threads::Threads PRIVATE hlm_opl3)
+target_link_libraries(hlm_core PUBLIC Threads::Threads PRIVATE hlm_opl3 hlm_decoders chdr-static miniz)
 hlm_set_warnings(hlm_core)

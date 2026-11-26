@@ -2,6 +2,7 @@
 #include "helmsman/data/game_source.hpp"
 
 #include "helmsman/data/reader.hpp"
+#include "zip.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -16,6 +17,24 @@ std::string lower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return text;
+}
+
+std::filesystem::path& cacheFolder() {
+    static std::filesystem::path folder;
+    return folder;
+}
+
+// Which image files in a folder to try first: those that describe the
+// others before the ones they describe.
+int imageRank(const std::filesystem::path& path) {
+    static const char* const kOrder[] = {".cue", ".gog", ".ins", ".inst", ".ccd", ".mds", ".chd", ".nrg", ".iso", ".img", ".mdf", ".bin"};
+    const auto ext = lower(path.extension().string());
+    for (std::size_t i = 0; i < std::size(kOrder); ++i) {
+        if (ext == kOrder[i]) {
+            return static_cast<int>(i);
+        }
+    }
+    return isZipName(path) ? static_cast<int>(std::size(kOrder)) : -1;
 }
 
 constexpr GameId kGames[] = {GameId::Anniversary, GameId::JudgmentRites};
@@ -143,7 +162,48 @@ std::string_view programName(GameId game) {
     return "";
 }
 
+void GameSource::setCacheFolder(std::filesystem::path folder) { cacheFolder() = std::move(folder); }
+
+namespace {
+// The images in a folder (and one folder down), tried in turn.
+std::unique_ptr<GameSource> openImagesIn(const std::filesystem::path& folder) {
+    std::vector<std::pair<int, std::filesystem::path>> images;
+    std::error_code ec;
+    std::filesystem::recursive_directory_iterator it(folder, ec);
+    for (; !ec && it != std::filesystem::recursive_directory_iterator() && images.size() < 200; it.increment(ec)) {
+        if (it.depth() >= 1) {
+            it.disable_recursion_pending();
+        }
+        const int rank = it->is_regular_file(ec) ? imageRank(it->path()) : -1;
+        if (rank >= 0) {
+            images.emplace_back(rank, it->path());
+        }
+    }
+    std::sort(images.begin(), images.end());
+    for (const auto& [rank, image] : images) {
+        try {
+            if (auto source = GameSource::open(image)) {
+                return source;
+            }
+        } catch (const FormatError&) {
+            // A damaged or foreign image beside the right one.
+        }
+    }
+    return nullptr;
+}
+
+// How deep open() is in itself: a zip in a zip in a zip is not followed.
+thread_local int openDepth = 0;
+} // namespace
+
 std::unique_ptr<GameSource> GameSource::open(const std::filesystem::path& path) {
+    if (openDepth > 2) {
+        return nullptr;
+    }
+    struct Depth {
+        Depth() { ++openDepth; }
+        ~Depth() { --openDepth; }
+    } depth;
     std::error_code ec;
     if (std::filesystem::is_directory(path, ec)) {
         FolderSource probe(path);
@@ -160,10 +220,16 @@ std::unique_ptr<GameSource> GameSource::open(const std::filesystem::path& path) 
                 return source;
             }
         }
-        return nullptr;
+        return openImagesIn(path);
     }
-    const auto ext = lower(path.extension().string());
-    if (ext != ".cue" && ext != ".bin" && ext != ".iso" && ext != ".img") {
+    if (isZipName(path)) {
+        auto source = openImagesIn(unpackZip(path, cacheFolder()));
+        if (source) {
+            source->origin_ = path;
+        }
+        return source;
+    }
+    if (!Disc::isImage(path)) {
         return nullptr;
     }
     auto disc = Disc::open(path);

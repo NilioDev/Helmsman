@@ -257,7 +257,7 @@ std::optional<GameId> chooseGame(Platform& platform, Library& library) {
                 ui::drawCentred(s, cx, r.bottom - 16, lit ? "> Start <" : "Start", lit ? kGold : kText);
             } else {
                 int y = r.top + 44;
-                for (const auto& line : wrap("Not added yet. Drop your CD image (.cue, .iso) or CD folder on "
+                for (const auto& line : wrap("Not added yet. Drop your CD image (.cue, .chd, .iso, ...), its .zip or CD folder on "
                                              "this window.",
                                              r.right - r.left - 12)) {
                     ui::drawCentred(s, cx, y, line, kDim);

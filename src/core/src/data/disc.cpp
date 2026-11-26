@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "helmsman/data/disc.hpp"
-
-#include "helmsman/data/reader.hpp"
+#include "disc_impl.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstring>
+#include <fstream>
+#include <optional>
 #include <span>
-#include <sstream>
 
 namespace helmsman {
 
@@ -20,6 +19,8 @@ constexpr std::uint32_t kFirstDescriptor = 16;
 constexpr std::uint32_t kMaxFolderSize = 1u << 20;
 constexpr int kMaxDepth = 8;
 constexpr std::size_t kMaxFiles = 100000;
+constexpr std::size_t kMaxTracks = 99;
+constexpr std::size_t kMaxStores = 200;
 
 bool isSync(std::span<const std::uint8_t> bytes) {
     if (bytes.size() < 12 || bytes[0] != 0 || bytes[11] != 0) {
@@ -28,13 +29,40 @@ bool isSync(std::span<const std::uint8_t> bytes) {
     return std::all_of(bytes.begin() + 1, bytes.begin() + 11, [](std::uint8_t b) { return b == 0xFF; });
 }
 
-std::string lower(std::string text) {
+class FileStore final : public Disc::Store {
+public:
+    explicit FileStore(const std::filesystem::path& path) : in_(path, std::ios::binary), size_(fileSizeOf(path)) {
+        if (!in_) {
+            throw FormatError("cannot open " + path.filename().string());
+        }
+    }
+    std::uint64_t size() const override { return size_; }
+    void read(std::uint64_t at, std::uint8_t* out, std::size_t n) override {
+        if (at > size_ || n > size_ - at) {
+            throw FormatError("the CD image ends too soon");
+        }
+        in_.seekg(static_cast<std::streamoff>(at));
+        in_.read(reinterpret_cast<char*>(out), static_cast<std::streamsize>(n));
+        if (!in_) {
+            in_.clear();
+            throw FormatError("cannot read the CD image");
+        }
+    }
+
+private:
+    std::ifstream in_;
+    std::uint64_t size_;
+};
+
+} // namespace
+
+std::string lowerText(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return text;
 }
 
-std::uint64_t fileSize(const std::filesystem::path& path) {
+std::uint64_t fileSizeOf(const std::filesystem::path& path) {
     std::error_code ec;
     const auto size = std::filesystem::file_size(path, ec);
     if (ec) {
@@ -43,120 +71,61 @@ std::uint64_t fileSize(const std::filesystem::path& path) {
     return size;
 }
 
-// "MM:SS:FF" in frames of a 75th of a second, which are sectors.
-std::uint64_t cueTime(const std::string& text) {
-    unsigned m = 0;
-    unsigned s = 0;
-    unsigned f = 0;
-    char c1 = 0;
-    char c2 = 0;
-    std::istringstream in(text);
-    in >> m >> c1 >> s >> c2 >> f;
-    if (!in || c1 != ':' || c2 != ':') {
-        throw FormatError("the cue sheet has a bad time");
-    }
-    return (std::uint64_t{m} * 60 + s) * 75 + f;
-}
-
-// A name in a cue sheet, in quotes or not.
-std::string cueName(std::istringstream& in) {
-    std::string rest;
-    std::getline(in, rest);
-    const auto first = rest.find('"');
-    if (first != std::string::npos) {
-        const auto last = rest.find('"', first + 1);
-        if (last == std::string::npos) {
-            throw FormatError("the cue sheet has a bad file name");
-        }
-        return rest.substr(first + 1, last - first - 1);
-    }
-    std::istringstream words(rest);
-    std::string name;
-    words >> name;
-    return name;
-}
-
-// Finds a file beside the cue sheet, also when the case of its name differs.
-std::filesystem::path besideCue(const std::filesystem::path& cue, const std::string& name) {
+std::filesystem::path findBeside(const std::filesystem::path& near, const std::string& name) {
     const std::filesystem::path plain(name);
-    // Only a bare name is taken: never a path out of the cue's folder.
-    if (plain.has_parent_path() || name == ".." || name == "." || name.empty()) {
-        throw FormatError("the cue sheet names a file outside its folder");
+    // Only a bare name is taken: never a path out of the folder.
+    if (plain.has_parent_path() || plain.has_root_path() || name == ".." || name == "." || name.empty() ||
+        name.find('/') != std::string::npos || name.find('\\') != std::string::npos) {
+        return {};
     }
-    // A link to a cue sheet finds the files beside the real one.
+    // A link to an image finds the files beside the real one.
     std::error_code real;
-    const auto resolved = std::filesystem::canonical(cue, real);
-    const auto folder = (real ? cue : resolved).parent_path();
+    const auto resolved = std::filesystem::canonical(near, real);
+    const auto folder = (real ? near : resolved).parent_path();
     auto path = folder / plain;
     std::error_code ec;
-    if (std::filesystem::exists(path, ec)) {
+    if (std::filesystem::is_regular_file(path, ec)) {
         return path;
     }
     for (const auto& entry : std::filesystem::directory_iterator(folder.empty() ? "." : folder, ec)) {
-        if (lower(entry.path().filename().string()) == lower(name)) {
+        if (lowerText(entry.path().filename().string()) == lowerText(name) && entry.is_regular_file(ec)) {
             return entry.path();
         }
     }
-    throw FormatError("the cue sheet's file " + name + " is missing");
+    return {};
 }
 
-struct CueTrack {
-    int number = 0;
-    bool audio = false;
-    std::uint32_t rawSize = Disc::kRawSector;
-    std::filesystem::path file;
-    std::uint64_t index1 = 0; // sectors into the file
-};
-
-std::vector<CueTrack> readCue(const std::filesystem::path& cue) {
-    std::ifstream in(cue, std::ios::binary);
-    if (!in) {
-        throw FormatError("cannot open the cue sheet");
+std::filesystem::path besideFile(const std::filesystem::path& near, const std::string& name) {
+    const std::filesystem::path plain(name);
+    if (plain.has_parent_path() || plain.has_root_path() || name == ".." || name == "." || name.empty()) {
+        throw FormatError("the image names a file outside its folder");
     }
-    std::vector<CueTrack> tracks;
-    std::filesystem::path file;
-    std::string line;
-    int lines = 0;
-    while (std::getline(in, line)) {
-        if (++lines > 10000) {
-            throw FormatError("the cue sheet is too long");
-        }
-        std::istringstream words(line);
-        std::string word;
-        words >> word;
-        std::transform(word.begin(), word.end(), word.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        if (word == "FILE") {
-            file = besideCue(cue, cueName(words));
-        } else if (word == "TRACK") {
-            CueTrack track;
-            std::string mode;
-            words >> track.number >> mode;
-            if (file.empty()) {
-                throw FormatError("the cue sheet has a track without a file");
-            }
-            track.file = file;
-            track.audio = mode == "AUDIO";
-            if (mode == "MODE1/2048") {
-                track.rawSize = Disc::kSectorData;
-            }
-            tracks.push_back(track);
-        } else if (word == "INDEX" && !tracks.empty()) {
-            int index = 0;
-            std::string time;
-            words >> index >> time;
-            if (index == 1) {
-                tracks.back().index1 = cueTime(time);
-            }
-        }
+    auto found = findBeside(near, name);
+    if (found.empty()) {
+        throw FormatError("the image's file " + name + " is missing");
     }
-    if (tracks.empty()) {
-        throw FormatError("the cue sheet has no tracks");
-    }
-    return tracks;
+    return found;
 }
 
-} // namespace
+std::unique_ptr<Disc::Store> fileStore(const std::filesystem::path& path) { return std::make_unique<FileStore>(path); }
+
+std::size_t DiscBuilder::addStore(std::unique_ptr<Disc::Store> store) {
+    if (disc.stores_.size() >= kMaxStores) {
+        throw FormatError("the CD image has too many files");
+    }
+    disc.stores_.push_back(std::move(store));
+    return disc.stores_.size() - 1;
+}
+
+void DiscBuilder::addTrack(const Disc::Track& track) {
+    if (disc.tracks_.size() >= kMaxTracks) {
+        throw FormatError("the CD image has too many tracks");
+    }
+    if (track.store >= disc.stores_.size() || track.stride == 0 || track.stride > 4096 || track.skip >= track.stride) {
+        throw FormatError("the CD image has a damaged track");
+    }
+    disc.tracks_.push_back(track);
+}
 
 std::string normalPath(std::string_view path) {
     std::string out;
@@ -169,67 +138,114 @@ std::string normalPath(std::string_view path) {
     return out;
 }
 
+Disc::Disc() = default;
+Disc::~Disc() = default;
+
+bool Disc::isImage(const std::filesystem::path& path) {
+    static const char* const kKinds[] = {".cue", ".bin", ".iso", ".img", ".ccd", ".mds", ".mdf",
+                                         ".nrg", ".chd", ".gog", ".ins", ".inst"};
+    const auto ext = lowerText(path.extension().string());
+    return std::any_of(std::begin(kKinds), std::end(kKinds), [&](const char* k) { return ext == k; });
+}
+
 std::unique_ptr<Disc> Disc::open(const std::filesystem::path& path) {
     auto disc = std::make_unique<Disc>();
-    std::uint64_t dataOffset = 0;
-    if (lower(path.extension().string()) == ".cue") {
-        const auto tracks = readCue(path);
-        const CueTrack* data = nullptr;
-        for (const auto& track : tracks) {
-            if (!track.audio && data == nullptr) {
-                data = &track;
-            }
-        }
-        if (data == nullptr) {
-            throw FormatError("the CD image has no data track");
-        }
-        disc->dataPath_ = data->file;
-        dataOffset = data->index1 * data->rawSize;
-        // Each audio track runs from its index 1 to the next track in the
-        // same file, or to the file's end.
-        for (std::size_t i = 0; i < tracks.size(); ++i) {
-            const auto& track = tracks[i];
-            if (!track.audio) {
-                continue;
-            }
-            const auto size = fileSize(track.file);
-            std::uint64_t end = size;
-            if (i + 1 < tracks.size() && tracks[i + 1].file == track.file) {
-                end = std::min(size, tracks[i + 1].index1 * kRawSector);
-            }
-            const auto start = track.index1 * kRawSector;
-            if (start < end) {
-                disc->audio_.push_back(AudioTrack{track.number, track.file, start, (end - start) / 4 * 4});
-            }
-        }
+    DiscBuilder b{*disc};
+    const auto ext = lowerText(path.extension().string());
+    const auto stem = path.stem().string();
+    if (ext == ".cue" || ext == ".ins" || ext == ".inst") {
+        readCueSheet(b, path);
+    } else if (ext == ".ccd") {
+        readCloneCd(b, path);
+    } else if (ext == ".mds") {
+        readAlcohol(b, path);
+    } else if (ext == ".nrg") {
+        readNero(b, path);
+    } else if (ext == ".chd") {
+        readChd(b, path);
+    } else if (const auto ccd = findBeside(path, stem + ".ccd"); ext == ".img" && !ccd.empty()) {
+        readCloneCd(b, ccd);
+    } else if (const auto mds = findBeside(path, stem + ".mds"); ext == ".mdf" && !mds.empty()) {
+        readAlcohol(b, mds);
     } else {
-        disc->dataPath_ = path;
+        // One data track, its sectors cooked or raw (found below).
+        Track t;
+        t.number = 1;
+        t.store = b.addStore(fileStore(path));
+        t.stride = 0;
+        disc->tracks_.push_back(t);
     }
-    disc->data_.open(disc->dataPath_, std::ios::binary);
-    if (!disc->data_) {
-        throw FormatError("cannot open the CD image");
-    }
-    disc->dataSize_ = fileSize(disc->dataPath_);
+    disc->finish();
+    return disc;
+}
 
-    // A raw image's sectors start with the sync bytes; the mode byte says
-    // where the data starts.
-    if (disc->dataSize_ >= dataOffset + std::uint64_t{kFirstDescriptor + 1} * kRawSector) {
-        std::array<std::uint8_t, 24> head{};
-        disc->data_.seekg(static_cast<std::streamoff>(dataOffset + kFirstDescriptor * kRawSector));
-        disc->data_.read(reinterpret_cast<char*>(head.data()), head.size());
-        if (disc->data_ && isSync(head)) {
-            disc->rawSize_ = kRawSector;
-            disc->dataStart_ = head[15] == 2 ? 24 : 16;
-        }
-        disc->data_.clear();
+void Disc::finish() {
+    const auto data = std::find_if(tracks_.begin(), tracks_.end(), [](const Track& t) { return !t.audio; });
+    if (data == tracks_.end()) {
+        throw FormatError("the CD image has no data track");
     }
-    disc->dataStart_ += static_cast<std::uint32_t>(std::min<std::uint64_t>(dataOffset, 0xFFFFFFFFu));
+    data_ = *data;
+    Store& store = *stores_[data_.store];
+    // A raw sector starts with the sync bytes; the mode byte says where the
+    // data starts. Where the reader did not know the size of a sector, a
+    // raw one has them, and a cooked one is 2048 bytes.
+    const std::uint32_t guess = data_.stride == 0 ? kRawSector : data_.stride;
+    if (guess >= kRawSector) {
+        const std::uint64_t at = data_.start + std::uint64_t{kFirstDescriptor} * guess;
+        std::array<std::uint8_t, 24> head{};
+        bool raw = false;
+        if (store.size() >= at + head.size()) {
+            store.read(at, head.data(), head.size());
+            raw = isSync(head);
+        }
+        if (raw) {
+            data_.stride = guess;
+            data_.skip = head[15] == 2 ? 24 : 16;
+        } else if (data_.stride == 0) {
+            data_.stride = kSectorData;
+        }
+    }
+    if (store.size() < data_.start) {
+        throw FormatError("the CD image ends too soon");
+    }
+    dataSectors_ = (store.size() - data_.start) / data_.stride;
+    if (data_.sectors != 0) {
+        dataSectors_ = std::min(dataSectors_, data_.sectors);
+    }
+
+    for (std::size_t i = 0; i < tracks_.size(); ++i) {
+        const Track& t = tracks_[i];
+        if (!t.audio) {
+            continue;
+        }
+        const std::uint64_t have = stores_[t.store]->size();
+        if (t.start >= have) {
+            continue;
+        }
+        std::uint64_t bytes = 0;
+        if (t.stride == kRawSector) {
+            bytes = have - t.start;
+            if (t.sectors != 0) {
+                bytes = std::min(bytes, t.sectors * kRawSector);
+            }
+        } else if (t.stride > kRawSector) {
+            std::uint64_t sectors = (have - t.start) / t.stride;
+            if (t.sectors != 0) {
+                sectors = std::min(sectors, t.sectors);
+            }
+            bytes = sectors * kRawSector;
+        }
+        bytes = bytes / 4 * 4;
+        if (bytes > 0) {
+            audio_.push_back(AudioTrack{t.number, i, bytes});
+        }
+    }
 
     std::array<std::uint8_t, kSectorData> sector{};
     std::optional<std::uint32_t> root;
     std::uint32_t rootSize = 0;
     for (std::uint32_t s = kFirstDescriptor; s < kFirstDescriptor + 32 && !root; ++s) {
-        disc->readSector(s, sector.data());
+        readSector(s, sector.data());
         if (std::memcmp(sector.data() + 1, "CD001", 5) != 0) {
             throw FormatError("not a CD image");
         }
@@ -247,8 +263,7 @@ std::unique_ptr<Disc> Disc::open(const std::filesystem::path& path) {
     if (!root) {
         throw FormatError("the CD image has no file system");
     }
-    disc->readFolder(*root, rootSize, "", 0);
-    return disc;
+    readFolder(*root, rootSize, "", 0);
 }
 
 void Disc::readFolder(std::uint32_t at, std::uint32_t size, const std::string& prefix, int depth) {
@@ -296,9 +311,8 @@ void Disc::readFolder(std::uint32_t at, std::uint32_t size, const std::string& p
                 subs.push_back(Sub{full + "/", where, length});
                 continue;
             }
-            const std::uint32_t used = (length + kSectorData - 1) / kSectorData;
-            const std::uint64_t end = (std::uint64_t{where} + used - 1) * rawSize_ + dataStart_ + kSectorData;
-            if (used > 0 && end > dataSize_) {
+            const std::uint64_t used = (std::uint64_t{length} + kSectorData - 1) / kSectorData;
+            if (used > 0 && std::uint64_t{where} + used > dataSectors_) {
                 throw FormatError("a file on the CD image goes past its end");
             }
             if (files_.size() >= kMaxFiles) {
@@ -323,16 +337,10 @@ const DiscFile* Disc::find(std::string_view path) const {
 }
 
 void Disc::readSector(std::uint32_t sector, std::uint8_t* out) {
-    const std::uint64_t at = std::uint64_t{sector} * rawSize_ + dataStart_;
-    if (at + kSectorData > dataSize_) {
+    if (sector >= dataSectors_) {
         throw FormatError("the CD image ends too soon");
     }
-    data_.seekg(static_cast<std::streamoff>(at));
-    data_.read(reinterpret_cast<char*>(out), kSectorData);
-    if (!data_) {
-        data_.clear();
-        throw FormatError("cannot read the CD image");
-    }
+    stores_[data_.store]->read(data_.start + std::uint64_t{sector} * data_.stride + data_.skip, out, kSectorData);
 }
 
 std::vector<std::uint8_t> Disc::read(const DiscFile& file) { return read(file, 0, file.size); }
@@ -343,18 +351,16 @@ std::vector<std::uint8_t> Disc::read(const DiscFile& file, std::uint64_t offset,
         return out;
     }
     const std::uint64_t end = std::min<std::uint64_t>(file.size, offset + size);
-    out.reserve(static_cast<std::size_t>(end - offset));
-    if (rawSize_ == kSectorData) {
-        // Plain images hold the file in one piece.
+    if (data_.stride == kSectorData) {
+        // Cooked images hold the file in one piece.
         out.resize(static_cast<std::size_t>(end - offset));
-        data_.seekg(static_cast<std::streamoff>(std::uint64_t{file.sector} * kSectorData + dataStart_ + offset));
-        data_.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(out.size()));
-        if (!data_) {
-            data_.clear();
-            throw FormatError("cannot read the CD image");
+        if (std::uint64_t{file.sector} * kSectorData + end > dataSectors_ * kSectorData) {
+            throw FormatError("the CD image ends too soon");
         }
+        stores_[data_.store]->read(data_.start + std::uint64_t{file.sector} * kSectorData + offset, out.data(), out.size());
         return out;
     }
+    out.reserve(static_cast<std::size_t>(end - offset));
     std::array<std::uint8_t, kSectorData> sector{};
     for (std::uint64_t at = offset; at < end;) {
         const auto index = static_cast<std::uint32_t>(at / kSectorData);
@@ -370,30 +376,38 @@ std::vector<std::uint8_t> Disc::read(const DiscFile& file, std::uint64_t offset,
 
 std::vector<std::int16_t> Disc::readAudio(const AudioTrack& track, std::uint64_t frame, std::size_t count) {
     std::vector<std::int16_t> out;
+    if (track.index >= tracks_.size()) {
+        return out;
+    }
+    const Track& t = tracks_[track.index];
     const std::uint64_t frames = track.size / 4;
     if (frame >= frames) {
         return out;
     }
     count = static_cast<std::size_t>(std::min<std::uint64_t>(count, frames - frame));
-    if (audioOpen_ != track.file) {
-        audioFile_.close();
-        audioFile_.clear();
-        audioFile_.open(track.file, std::ios::binary);
-        audioOpen_ = track.file;
-    }
-    if (!audioFile_) {
-        throw FormatError("cannot read the CD image's audio");
-    }
     std::vector<std::uint8_t> raw(count * 4);
-    audioFile_.seekg(static_cast<std::streamoff>(track.offset + frame * 4));
-    audioFile_.read(reinterpret_cast<char*>(raw.data()), static_cast<std::streamsize>(raw.size()));
-    if (!audioFile_) {
-        audioFile_.clear();
-        throw FormatError("cannot read the CD image's audio");
+    Store& store = *stores_[t.store];
+    if (t.stride == kRawSector) {
+        store.read(t.start + frame * 4, raw.data(), raw.size());
+    } else {
+        // Sectors with more than the samples (the subchannel): a piece of
+        // each.
+        std::uint64_t at = frame * 4;
+        std::size_t done = 0;
+        while (done < raw.size()) {
+            const std::uint64_t sector = at / kRawSector;
+            const auto from = static_cast<std::size_t>(at % kRawSector);
+            const std::size_t take = std::min<std::size_t>(kRawSector - from, raw.size() - done);
+            store.read(t.start + sector * t.stride + from, raw.data() + done, take);
+            done += take;
+            at += take;
+        }
     }
     out.resize(count * 2);
     for (std::size_t i = 0; i < out.size(); ++i) {
-        out[i] = static_cast<std::int16_t>(raw[2 * i] | (raw[2 * i + 1] << 8));
+        const std::uint8_t lo = t.bigEndian ? raw[2 * i + 1] : raw[2 * i];
+        const std::uint8_t hi = t.bigEndian ? raw[2 * i] : raw[2 * i + 1];
+        out[i] = static_cast<std::int16_t>(lo | (hi << 8));
     }
     return out;
 }

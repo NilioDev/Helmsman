@@ -12,8 +12,16 @@ Helmsman does not contain the games. You need your own copies.
 ## What you need
 
 - Your CD of either game, or both: the disc itself copied to a folder, or
-  an image of it (a `.cue` with its `.bin` files, a single `.bin`, or an
-  `.iso`).
+  an image of it. Helmsman reads the usual kinds:
+  - a `.cue` with its `.bin` files (also when the music tracks are `.wav`,
+    `.flac`, `.ogg` or `.mp3` files), a single `.bin`, `.iso` or `.img`;
+  - `.chd`, CloneCD (`.ccd` with `.img`), Alcohol (`.mds` with `.mdf`) and
+    Nero (`.nrg`);
+  - the `.gog`/`.ins` pair that digital-store releases come with;
+  - any of these inside a `.zip`, also one split into parts (`.zip.001`,
+    `.zip.002`, ...). Helmsman unpacks it once into its settings folder
+    (about as much space as the CD takes) and uses that copy from then on.
+    A `.7z` or `.rar` has to be unpacked first.
 - Windows, macOS or Linux.
 
 ## Getting Helmsman
@@ -25,7 +33,8 @@ compiler, and fetches everything else by itself.
 ## Adding your games
 
 Start Helmsman. It shows a card for each game. To add one, drop its CD
-image (the `.cue` or `.iso`) or the CD's folder onto the window. Helmsman
+image (the `.cue`, `.chd`, `.iso`, ... or the `.zip` it is in) or the CD's
+folder onto the window. A folder that holds an image works as well. Helmsman
 remembers it from then on.
 
 You can also put the images or folders in a folder named `gamedata`, next
@@ -130,3 +139,8 @@ Sound effects and music can be turned off in the options.
 Helmsman is free software under the GNU General Public License, version 3
 or later (see [LICENSE](LICENSE)). The games themselves belong to their
 makers and are not part of Helmsman.
+
+Helmsman includes the work of others, each under its own licence: Nuked
+OPL3 (LGPL-2.1-or-later) for the music cards' sound, libchdr (BSD-3-Clause,
+with LZMA, Zstandard and miniz) for `.chd` and `.zip` files, dr_flac and
+dr_mp3 (public domain or MIT-0), and stb_vorbis (public domain or MIT).

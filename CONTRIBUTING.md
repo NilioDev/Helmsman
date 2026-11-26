@@ -3,8 +3,11 @@
 ## Building
 
 You need CMake 3.22 or newer, a C++20 compiler (GCC 11+, Clang 14+ or
-Visual Studio 2022) and Ninja or another generator. SDL3 is fetched and
-built along with Helmsman.
+Visual Studio 2022) and Ninja or another generator. SDL3 and libchdr (for
+`.chd` images; it also brings miniz, used for `.zip` files) are fetched and
+built along with Helmsman, each at a pinned commit. The music decoders for
+images that keep their CD music as files (dr_mp3, stb_vorbis) live in
+`third_party/`, unchanged; `.flac` uses the dr_flac inside libchdr.
 
 ```
 cmake -S . -B build -G Ninja
