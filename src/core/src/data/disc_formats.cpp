@@ -560,10 +560,10 @@ void readChd(DiscBuilder& b, const std::filesystem::path& path) {
         std::array<char, 256> text{};
         std::uint32_t got = 0;
         bool v2 = true;
-        if (chd_get_metadata(chd.chd(), CDROM_TRACK_METADATA2_TAG, i, text.data(), text.size() - 1, &got, nullptr, nullptr) !=
+        if (chd_get_metadata(chd.chd(), CDROM_TRACK_METADATA2_TAG, i, text.data(), static_cast<std::uint32_t>(text.size() - 1), &got, nullptr, nullptr) !=
             CHDERR_NONE) {
             v2 = false;
-            if (chd_get_metadata(chd.chd(), CDROM_TRACK_METADATA_TAG, i, text.data(), text.size() - 1, &got, nullptr, nullptr) !=
+            if (chd_get_metadata(chd.chd(), CDROM_TRACK_METADATA_TAG, i, text.data(), static_cast<std::uint32_t>(text.size() - 1), &got, nullptr, nullptr) !=
                 CHDERR_NONE) {
                 break;
             }
