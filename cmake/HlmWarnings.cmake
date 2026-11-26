@@ -17,6 +17,12 @@ function(hlm_set_warnings target)
         endif()
         if(HLM_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE -Werror)
+            # GCC's guesses at uninitialised values change from release to
+            # release and misfire inside the standard library (std::optional);
+            # they stay warnings.
+            if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+                target_compile_options(${target} PRIVATE -Wno-error=maybe-uninitialized)
+            endif()
         endif()
     endif()
 endfunction()

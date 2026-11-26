@@ -221,10 +221,11 @@ void Game::restorePayload(std::span<const std::uint8_t> payload) {
         restoreMusic(r);
     }
     applyView();
-    resumeAway_.reset();
     if (where == kOnMission) {
-        resumeAway_.emplace(payload.begin() + static_cast<std::ptrdiff_t>(r.pos()), payload.end());
+        resumeAway_ = std::vector<std::uint8_t>(payload.begin() + static_cast<std::ptrdiff_t>(r.pos()), payload.end());
         awayPending_ = true;
+    } else {
+        resumeAway_ = std::nullopt;
     }
 }
 
