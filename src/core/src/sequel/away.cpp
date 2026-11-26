@@ -474,6 +474,8 @@ bool Game::walk(int who, int fx, int fy, int tx, int ty, int code) {
         }
     }
     b.path.emplace_back(tx, ty);
+    b.toX = tx;
+    b.toY = ty;
     if (p_.devTrace) {
         std::fprintf(stderr, "walk %d from %d,%d to %d,%d via %zu points\n", who, fx, fy, tx, ty, b.path.size());
     }
@@ -501,7 +503,7 @@ void Game::walkStep(Body& b, int who) {
             setRec8(who, rec::kCode, code);
             finish(who);
             if (who == kKirk) {
-                checkAreas(b.x, b.y);
+                checkAreas(b);
                 for (const auto& p : polygons(room::kAreas, room::kAreas + 2)) {
                     if (p.contains(b.x, b.y)) {
                         post(ev::kStopInArea, static_cast<std::uint8_t>(p.id));
@@ -525,21 +527,25 @@ void Game::walkStep(Body& b, int who) {
     m_.set16(static_cast<std::uint16_t>(r + rec::kY), static_cast<std::uint16_t>(b.y));
     setWalkPicture(b, who);
     if (who == kKirk) {
-        checkAreas(b.x, b.y);
+        checkAreas(b);
     }
 }
 
-// Kirk's place against the room's touch areas and ways out.
-void Game::checkAreas(int x, int y) {
-    // While the player gives no orders (Kirk coming in, or walked by a
-    // script) his steps touch nothing: a way in may cross a room's way out.
-    if (busy()) {
-        return;
-    }
+// Kirk's place against the room's touch areas and ways out, at each step.
+// Coming into an area tells the room once; it hears "in the area" only when
+// the walk also ends in it, so a walk that starts inside one and leads out
+// is left alone. A way out only takes him when the walk ends in it too, and
+// not while the player gives no orders (Kirk coming in, or walked by a
+// script): a way in may cross a room's way out.
+void Game::checkAreas(const Body& b) {
+    const int x = b.x;
+    const int y = b.y;
     int inArea = -1;
+    bool goalIn = false;
     for (const auto& p : polygons(room::kAreas, room::kAreas + 2)) {
         if (p.contains(x, y)) {
             inArea = p.id;
+            goalIn = p.contains(b.toX, b.toY);
             break;
         }
     }
@@ -547,24 +553,32 @@ void Game::checkAreas(int x, int y) {
         if (area_ != -1) {
             post(ev::kLeaveArea, static_cast<std::uint8_t>(area_));
         }
+        area_ = inArea;
         if (inArea != -1) {
             post(ev::kEnterArea, static_cast<std::uint8_t>(inArea));
+            if (goalIn) {
+                post(ev::kInArea, static_cast<std::uint8_t>(inArea));
+            }
         }
-        area_ = inArea;
-    } else if (inArea != -1) {
-        post(ev::kInArea, static_cast<std::uint8_t>(inArea));
+    }
+    if (busy()) {
+        exitArmed_ = -1;
+        return;
     }
     int exit = -1;
     for (const auto& p : polygons(room::kExits, room::kExits + 2)) {
         if (p.contains(x, y)) {
+            if (p.id != exitArmed_ && p.contains(b.toX, b.toY)) {
+                exitArmed_ = p.id;
+                post(ev::kExit, static_cast<std::uint8_t>(p.id));
+            }
             exit = p.id;
             break;
         }
     }
-    if (exit != -1 && exit != exitArmed_) {
-        post(ev::kExit, static_cast<std::uint8_t>(exit));
+    if (exit == -1) {
+        exitArmed_ = -1;
     }
-    exitArmed_ = exit;
 }
 
 // --- Time -----------------------------------------------------------------

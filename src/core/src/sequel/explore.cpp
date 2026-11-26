@@ -522,7 +522,20 @@ void Game::exploreIdle() {
         act = x.replay.front();
         x.replay.pop_front();
     } else {
-        act = n.actions[n.next++];
+        // An order given twice in a row already is not given a third time:
+        // what it changes then is mostly a count (of times talked to).
+        bool found = false;
+        while (!found && n.next < n.actions.size()) {
+            act = n.actions[n.next++];
+            const std::string twice = " " + actionText(act.type, act.a, act.b, act.variant);
+            const std::string& path = n.path;
+            const std::string tail = twice + twice;
+            found = path.size() < tail.size() || path.compare(path.size() - tail.size(), tail.size(), tail) != 0;
+        }
+        if (!found) {
+            x.from = -1;
+            exploreJump(nullptr);
+        }
     }
     ++x.tried;
     x.from = node;

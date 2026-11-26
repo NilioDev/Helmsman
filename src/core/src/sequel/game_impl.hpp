@@ -228,6 +228,8 @@ struct Body {
     std::int32_t vx = 0;
     std::int32_t vy = 0;
     int steps = 0;
+    int toX = 0; // where the walk ends
+    int toY = 0;
     int walkFrame = 0;
     char dir = 's';
     int code = 0; // the event code when it is done (0 none)
@@ -462,7 +464,7 @@ private:
     void loadWalkMap(const std::string& name);
     std::vector<Polygon> polygons(std::uint16_t from, std::uint16_t to) const;
     int thingAt(int x, int y);
-    void checkAreas(int x, int y);
+    void checkAreas(const Body& b);
     void awayInput();
     int actionMenu();
     int inventory(bool forUse);

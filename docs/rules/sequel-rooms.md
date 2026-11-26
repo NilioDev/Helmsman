@@ -35,8 +35,10 @@ An event is four bytes: its kind and three values.
 | 0x03 | get `a` |
 | 0x04 | look at `a` |
 | 0x05 | talk to `a` |
-| 0x06 | Kirk is at way out `a` |
-| 0x07, 0x08, 0x0E | Kirk steps into, stays in, leaves touch area `a` |
+| 0x06 | Kirk is at way out `a`, and his walk ends in it (not while the player has no say) |
+| 0x07, 0x0E | Kirk steps into, leaves touch area `a` |
+| 0x08 | Kirk steps into touch area `a` and his walk ends in it: told once, as he comes in |
+| 0x0D | Kirk's walk has ended in touch area `a` |
 | 0x09 | timer `a` has run out (the eight timers are at `DS:C202`) |
 | 0x0A | person done: the code given when the walk or animation began |
 | 0x0B | the mission begins |
