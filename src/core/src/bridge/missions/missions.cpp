@@ -17,8 +17,4 @@ void missionEvent(Bridge& b, const Event& e) {
     }
 }
 
-// Not written yet: the bridge as it always is.
-void startEncounter(Bridge&) {}
-void encounterEvent(Bridge& b, const Event& e) { b.defaultEvent(e); }
-
 } // namespace helmsman::bridge
