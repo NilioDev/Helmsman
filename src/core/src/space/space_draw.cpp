@@ -45,9 +45,13 @@ void Space::placeCamera() {
         cameraAxes_ = player().axes;
         return;
     }
+    camera_ = outsidePos_;
+    if (fixed_) {
+        cameraAxes_ = Mat::identity();
+        return;
+    }
     // Looking at the player's ship: forward towards it, up as near the
     // world's up as can be.
-    camera_ = outsidePos_;
     const Vec f = unit(player().pos - camera_);
     const double fx = f.x / double(kOne), fy = f.y / double(kOne), fz = f.z / double(kOne);
     // right = up x forward, with up = (0, 1, 0)

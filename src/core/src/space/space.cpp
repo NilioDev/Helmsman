@@ -152,7 +152,7 @@ const ShipClass& Space::shipClass(const std::string& name) {
 
 void Space::setView(ClipRect rect, int zoom) {
     view_ = rect;
-    zoom_ = std::clamp(zoom, 4, 8);
+    zoom_ = std::clamp(zoom, 1, 0x100); // the bridge 4..8, the titles more
     // The original passes the corners inclusive.
     const int x1 = rect.left;
     const int y1 = rect.top;

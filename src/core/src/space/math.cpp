@@ -192,4 +192,16 @@ int angleOf(double y, double x) {
     return static_cast<int>(a) & (kTurn - 1);
 }
 
+Mat heading(int angle) {
+    const double a = static_cast<double>(angle) / kTurn * 2 * std::numbers::pi;
+    const auto c = static_cast<std::int16_t>(std::lround(std::cos(a) * (kOne - 1)));
+    const auto s = static_cast<std::int16_t>(std::lround(std::sin(a) * (kOne - 1)));
+    Mat m = Mat::identity();
+    m.at(0, 0) = c;
+    m.at(0, 2) = static_cast<std::int16_t>(-s);
+    m.at(2, 0) = s;
+    m.at(2, 2) = c;
+    return m;
+}
+
 } // namespace helmsman::space

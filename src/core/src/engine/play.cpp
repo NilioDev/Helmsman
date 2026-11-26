@@ -7,6 +7,7 @@
 #include "helmsman/bridge/voyage.hpp"
 #include "helmsman/data/archive.hpp"
 #include "helmsman/engine/savegame.hpp"
+#include "helmsman/engine/titles.hpp"
 #include "helmsman/gfx/bitmap.hpp"
 
 #include <cctype>
@@ -104,6 +105,10 @@ Next voyage(away::Session& session, int load) {
 
 // The first game: the bridge, and the planets the crew beams down to.
 void playAnniversary(Platform& platform, GameSource& source) {
+    {
+        away::Session titles(platform, source);
+        playOpeningTitles(titles);
+    }
     Next next = Next::Restart;
     while (next == Next::Restart && !platform.quit) {
         away::Session session(platform, source); // all afresh

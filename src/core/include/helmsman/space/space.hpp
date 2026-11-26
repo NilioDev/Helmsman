@@ -223,9 +223,20 @@ public:
     // towards the player's ship (which is then drawn too). Off by default.
     void watchFrom(const Vec& where) {
         outside_ = true;
+        fixed_ = false;
         outsidePos_ = where;
     }
-    void watchFromBridge() { outside_ = false; }
+    void watchFromBridge() {
+        outside_ = false;
+        fixed_ = false;
+    }
+    // Watches from `where` straight along the z axis, the player's ship
+    // drawn too (for the titles).
+    void watchAlongZ(const Vec& where) {
+        outside_ = true;
+        fixed_ = true;
+        outsidePos_ = where;
+    }
     // Forgets the stars, so that new ones are scattered.
     void resetStars();
 
@@ -281,6 +292,7 @@ private:
     int halfW_ = 0;
     int halfH_ = 0;
     std::int32_t focal_ = 1;
+    bool fixed_ = false;
     static constexpr std::int32_t kNear = 50;
 
     Vec camera_;

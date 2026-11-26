@@ -68,5 +68,8 @@ std::int32_t stepAngle(int steps);
 
 // Angles, in 1024ths of a turn.
 int angleOf(double y, double x);  // like atan2, 0..1023
+// A level frame whose forward direction points `angle` round from straight
+// ahead (+z) towards the right (+x).
+Mat heading(int angle);
 
 } // namespace helmsman::space
